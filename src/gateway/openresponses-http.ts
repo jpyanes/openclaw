@@ -840,24 +840,6 @@ export async function handleOpenResponsesHttpRequest(
 
       finalUsage = finalUsage ?? createEmptyUsage();
       startStream();
-      if (isClientToolNameConflictError(err)) {
-        const errorResponse = createResponseResource({
-          id: responseId,
-          model,
-          status: "failed",
-          output: [],
-          error: { code: "invalid_request_error", message: "invalid tool configuration" },
-          usage: finalUsage,
-        });
-
-        writeSseEvent(res, { type: "response.failed", response: errorResponse });
-        emitAgentEvent({
-          runId: responseId,
-          stream: "lifecycle",
-          data: { phase: "error" },
-        });
-        return;
-      }
       const errorResponse = createResponseResource({
         id: responseId,
         model,

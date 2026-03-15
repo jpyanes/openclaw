@@ -159,6 +159,9 @@ export function findClientToolNameConflicts(params: {
     if (existingNormalized.has(normalizedName)) {
       conflicts.add(rawName);
     }
+    // Keep the first client-provided spelling for each normalized name so every
+    // later duplicate is reported against a stable original entry, even when
+    // the later name also collides with an existing built-in tool.
     const priorClientName = seenClientNames.get(normalizedName);
     if (priorClientName) {
       conflicts.add(priorClientName);
