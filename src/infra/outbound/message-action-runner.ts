@@ -13,6 +13,7 @@ import type {
   ChannelThreadingToolContext,
 } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { normalizeInteractiveReply } from "../../interactive/payload.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { hasPollCreationParams, resolveTelegramPollVisibility } from "../../poll-params.js";
 import { resolvePollMaxSelections } from "../../polls.js";
@@ -33,6 +34,7 @@ import {
   parseButtonsParam,
   parseCardParam,
   parseComponentsParam,
+  parseInteractiveParam,
   readBooleanParam,
   resolveAttachmentMediaPolicy,
   resolveSlackAutoThreadId,
@@ -404,10 +406,11 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     readStringParam(params, "filePath", { trim: false });
   const hasCard = params.card != null && typeof params.card === "object";
   const hasComponents = params.components != null && typeof params.components === "object";
+  const hasInteractive = normalizeInteractiveReply(params.interactive) != null;
   const caption = readStringParam(params, "caption", { allowEmpty: true }) ?? "";
   let message =
     readStringParam(params, "message", {
-      required: !mediaHint && !hasCard && !hasComponents,
+      required: !mediaHint && !hasCard && !hasComponents && !hasInteractive,
       allowEmpty: true,
     }) ?? "";
   if (message.includes("\\n")) {
@@ -473,7 +476,14 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
       message = "";
     }
   }
-  if (!message.trim() && !mediaUrl && mergedMediaUrls.length === 0 && !hasCard && !hasComponents) {
+  if (
+    !message.trim() &&
+    !mediaUrl &&
+    mergedMediaUrls.length === 0 &&
+    !hasCard &&
+    !hasComponents &&
+    !hasInteractive
+  ) {
     throw new Error("send requires text or media");
   }
   params.message = message;
@@ -708,6 +718,7 @@ export async function runMessageAction(
   parseButtonsParam(params);
   parseCardParam(params);
   parseComponentsParam(params);
+  parseInteractiveParam(params);
 
   const action = input.action;
   if (action === "broadcast") {
