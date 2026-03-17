@@ -28,6 +28,11 @@ export type EnabledBundleMcpConfigResult = {
   config: BundleMcpConfig;
   diagnostics: BundleMcpDiagnostic[];
 };
+export type BundleMcpRuntimeSupport = {
+  hasSupportedStdioServer: boolean;
+  unsupportedServerNames: string[];
+  diagnostics: string[];
+};
 
 const MANIFEST_PATH_BY_FORMAT: Record<PluginBundleFormat, string> = {
   claude: CLAUDE_BUNDLE_MANIFEST_RELATIVE_PATH,
@@ -290,6 +295,28 @@ function loadBundleMcpConfig(params: {
   ) as BundleMcpConfig;
 
   return { config: merged, diagnostics: [] };
+}
+
+export function inspectBundleMcpRuntimeSupport(params: {
+  pluginId: string;
+  rootDir: string;
+  bundleFormat: PluginBundleFormat;
+}): BundleMcpRuntimeSupport {
+  const loaded = loadBundleMcpConfig(params);
+  const unsupportedServerNames: string[] = [];
+  let hasSupportedStdioServer = false;
+  for (const [serverName, server] of Object.entries(loaded.config.mcpServers)) {
+    if (typeof server.command === "string" && server.command.trim().length > 0) {
+      hasSupportedStdioServer = true;
+      continue;
+    }
+    unsupportedServerNames.push(serverName);
+  }
+  return {
+    hasSupportedStdioServer,
+    unsupportedServerNames,
+    diagnostics: loaded.diagnostics,
+  };
 }
 
 export function loadEnabledBundleMcpConfig(params: {
