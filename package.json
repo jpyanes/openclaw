@@ -257,6 +257,22 @@
       "types": "./dist/plugin-sdk/discord-core.d.ts",
       "default": "./dist/plugin-sdk/discord-core.js"
     },
+    "./plugin-sdk/discord-runtime-bindings": {
+      "types": "./dist/plugin-sdk/discord-runtime-bindings.d.ts",
+      "default": "./dist/plugin-sdk/discord-runtime-bindings.js"
+    },
+    "./plugin-sdk/discord-runtime-directory": {
+      "types": "./dist/plugin-sdk/discord-runtime-directory.d.ts",
+      "default": "./dist/plugin-sdk/discord-runtime-directory.js"
+    },
+    "./plugin-sdk/discord-runtime-provider": {
+      "types": "./dist/plugin-sdk/discord-runtime-provider.d.ts",
+      "default": "./dist/plugin-sdk/discord-runtime-provider.js"
+    },
+    "./plugin-sdk/discord-runtime-send": {
+      "types": "./dist/plugin-sdk/discord-runtime-send.d.ts",
+      "default": "./dist/plugin-sdk/discord-runtime-send.js"
+    },
     "./plugin-sdk/extension-shared": {
       "types": "./dist/plugin-sdk/extension-shared.d.ts",
       "default": "./dist/plugin-sdk/extension-shared.js"
