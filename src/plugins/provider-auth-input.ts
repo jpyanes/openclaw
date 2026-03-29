@@ -1,3 +1,4 @@
+import { ensureAuthProfileStore, resolveApiKeyForProfile } from "../agents/auth-profiles.js";
 import { resolveEnvApiKey } from "../agents/model-auth-env.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { SecretInput } from "../config/types.secrets.js";
@@ -26,6 +27,11 @@ export {
 } from "./provider-auth-mode.js";
 
 const DEFAULT_KEY_PREVIEW = { head: 4, tail: 4 };
+
+type ExistingStoredApiKey = {
+  credentialInput: SecretInput;
+  resolvedApiKey: string;
+};
 
 export function normalizeApiKeyInput(raw: string): string {
   const trimmed = String(raw ?? "").trim();
@@ -94,6 +100,56 @@ export function normalizeSecretInputModeInput(
   return undefined;
 }
 
+async function resolveExistingStoredApiKey(params: {
+  config: OpenClawConfig;
+  agentDir?: string;
+  profileIds?: string[];
+}): Promise<ExistingStoredApiKey | undefined> {
+  const profileIds = (params.profileIds ?? []).map((value) => value.trim()).filter(Boolean);
+  if (profileIds.length === 0) {
+    return undefined;
+  }
+
+  const store = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+  });
+
+  for (const profileId of profileIds) {
+    const credential = store.profiles[profileId];
+    if (!credential) {
+      continue;
+    }
+
+    const credentialInput =
+      credential.type === "api_key"
+        ? (credential.keyRef ?? credential.key)
+        : credential.type === "token"
+          ? (credential.tokenRef ?? credential.token)
+          : undefined;
+    if (!credentialInput) {
+      continue;
+    }
+
+    const resolved = await resolveApiKeyForProfile({
+      cfg: params.config,
+      store,
+      profileId,
+      agentDir: params.agentDir,
+    });
+    const resolvedApiKey = resolved?.apiKey?.trim();
+    if (!resolvedApiKey) {
+      continue;
+    }
+
+    return {
+      credentialInput,
+      resolvedApiKey,
+    };
+  }
+
+  return undefined;
+}
+
 export async function maybeApplyApiKeyFromOption(params: {
   token: string | undefined;
   tokenProvider: string | undefined;
@@ -120,6 +176,8 @@ export async function ensureApiKeyFromOptionEnvOrPrompt(params: {
   secretInputMode?: SecretInputMode;
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+  profileIds?: string[];
   expectedProviders: string[];
   provider: string;
   envLabel: string;
@@ -150,6 +208,8 @@ export async function ensureApiKeyFromOptionEnvOrPrompt(params: {
   return await ensureApiKeyFromEnvOrPrompt({
     config: params.config,
     env: params.env,
+    agentDir: params.agentDir,
+    profileIds: params.profileIds,
     provider: params.provider,
     envLabel: params.envLabel,
     promptMessage: params.promptMessage,
@@ -164,6 +224,8 @@ export async function ensureApiKeyFromOptionEnvOrPrompt(params: {
 export async function ensureApiKeyFromEnvOrPrompt(params: {
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+  profileIds?: string[];
   provider: string;
   envLabel: string;
   promptMessage: string;
@@ -213,11 +275,45 @@ export async function ensureApiKeyFromEnvOrPrompt(params: {
     }
   }
 
+  const existingStoredApiKey =
+    selectedMode === "plaintext"
+      ? await resolveExistingStoredApiKey({
+          config: params.config,
+          agentDir: params.agentDir,
+          profileIds: params.profileIds,
+        })
+      : undefined;
+  const existingPreview = existingStoredApiKey
+    ? formatApiKeyPreview(existingStoredApiKey.resolvedApiKey)
+    : undefined;
+
   const key = await params.prompter.text({
     message: params.promptMessage,
-    validate: params.validate,
+    ...(existingPreview
+      ? {
+          placeholder: `Press Enter to keep current (${existingPreview})`,
+        }
+      : {}),
+    secret: true,
+    validate: (value) => {
+      const normalized = params.normalize(String(value ?? ""));
+      if (!normalized && existingStoredApiKey) {
+        return undefined;
+      }
+      return params.validate(value);
+    },
   });
-  const apiKey = params.normalize(String(key ?? ""));
-  await params.setCredential(apiKey, selectedMode);
-  return apiKey;
+  const normalizedInput = params.normalize(String(key ?? ""));
+  const credentialInput: SecretInput = (() => {
+    if (!normalizedInput && existingStoredApiKey) {
+      return existingStoredApiKey.credentialInput;
+    }
+    return normalizedInput;
+  })();
+  await params.setCredential(credentialInput, selectedMode);
+  return selectedMode === "plaintext" && existingStoredApiKey && !normalizedInput
+    ? existingStoredApiKey.resolvedApiKey
+    : typeof credentialInput === "string"
+      ? params.normalize(credentialInput)
+      : "";
 }

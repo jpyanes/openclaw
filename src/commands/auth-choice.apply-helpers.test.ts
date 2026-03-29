@@ -1,4 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  clearRuntimeAuthProfileStoreSnapshots,
+  upsertAuthProfile,
+} from "../agents/auth-profiles.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import {
   ensureApiKeyFromOptionEnvOrPrompt,
@@ -194,6 +201,7 @@ async function ensureWithOptionEnvOrPrompt(params: {
 
 afterEach(() => {
   restoreMinimaxEnv();
+  clearRuntimeAuthProfileStoreSnapshots();
   vi.restoreAllMocks();
 });
 
@@ -254,8 +262,126 @@ describe("ensureApiKeyFromEnvOrPrompt", () => {
     expect(text).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "Enter key",
+        secret: true,
       }),
     );
+  });
+
+  it("keeps the stored profile api key when the prompt is left blank", async () => {
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-minimax-auth-choice-"));
+    try {
+      upsertAuthProfile({
+        profileId: "minimax:default",
+        agentDir,
+        credential: {
+          type: "api_key",
+          provider: "minimax",
+          key: "stored-key",
+        },
+      });
+
+      const { confirm, text, setCredential } = createPromptAndCredentialSpies({
+        confirmResult: false,
+        textResult: "   ",
+      });
+
+      const result = await ensureApiKeyFromEnvOrPrompt({
+        config: {
+          auth: {
+            profiles: {
+              "minimax:default": {
+                provider: "minimax",
+                mode: "api_key",
+              },
+            },
+          },
+        },
+        agentDir,
+        profileIds: ["minimax:default"],
+        provider: "minimax",
+        envLabel: "MINIMAX_API_KEY",
+        promptMessage: "Enter key",
+        normalize: (value) => value.trim(),
+        validate: () => undefined,
+        prompter: createPrompter({
+          confirm,
+          text,
+        }),
+        setCredential,
+      });
+
+      expect(result).toBe("stored-key");
+      expect(setCredential).toHaveBeenCalledWith("stored-key", "plaintext");
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          placeholder: expect.stringContaining("st…ey"),
+          secret: true,
+        }),
+      );
+    } finally {
+      fs.rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an existing secret ref when keeping the current key", async () => {
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-minimax-auth-choice-"));
+    try {
+      upsertAuthProfile({
+        profileId: "minimax:default",
+        agentDir,
+        credential: {
+          type: "api_key",
+          provider: "minimax",
+          keyRef: { source: "env", provider: "default", id: "MINIMAX_API_KEY" },
+        },
+      });
+
+      const env = { MINIMAX_API_KEY: "stored-ref-key" } as NodeJS.ProcessEnv;
+      const { confirm, text, setCredential } = createPromptAndCredentialSpies({
+        confirmResult: false,
+        textResult: "",
+      });
+
+      const result = await ensureApiKeyFromEnvOrPrompt({
+        config: {
+          auth: {
+            profiles: {
+              "minimax:default": {
+                provider: "minimax",
+                mode: "api_key",
+              },
+            },
+          },
+        },
+        env,
+        agentDir,
+        profileIds: ["minimax:default"],
+        provider: "minimax",
+        envLabel: "MINIMAX_API_KEY",
+        promptMessage: "Enter key",
+        normalize: (value) => value.trim(),
+        validate: () => undefined,
+        prompter: createPrompter({
+          confirm,
+          text,
+        }),
+        setCredential,
+      });
+
+      expect(result).toBe("stored-ref-key");
+      expect(setCredential).toHaveBeenCalledWith(
+        { source: "env", provider: "default", id: "MINIMAX_API_KEY" },
+        "plaintext",
+      );
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          placeholder: expect.stringContaining("stor…-key"),
+          secret: true,
+        }),
+      );
+    } finally {
+      fs.rmSync(agentDir, { recursive: true, force: true });
+    }
   });
 
   it("uses explicit inline env ref when secret-input-mode=ref selects existing env key", async () => {

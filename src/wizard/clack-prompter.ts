@@ -7,6 +7,7 @@ import {
   multiselect,
   type Option,
   outro,
+  password,
   select,
   spinner,
   text,
@@ -100,8 +101,9 @@ export function createClackPrompter(): WizardPrompter {
     },
     text: async (params) => {
       const validate = params.validate;
+      const promptFn = params.secret ? password : text;
       return guardCancel(
-        await text({
+        await promptFn({
           message: stylePromptMessage(params.message),
           initialValue: params.initialValue,
           placeholder: params.placeholder,

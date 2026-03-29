@@ -112,6 +112,8 @@ export function createProviderApiKeyAuthMethod(
             : ctx.secretInputMode,
         config: ctx.config,
         env: ctx.env,
+        agentDir: ctx.agentDir,
+        profileIds: resolveProfileIds(params),
         expectedProviders: params.expectedProviders ?? [params.providerId],
         provider: params.providerId,
         envLabel: params.envVar,
