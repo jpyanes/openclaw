@@ -4,6 +4,8 @@ export {
   createManagedFlow,
   deleteFlowRecordById,
   findLatestFlowForOwnerKey,
+  failFlow,
+  finishFlow,
   getFlowById,
   listFlowRecords,
   listFlowsForOwnerKey,
