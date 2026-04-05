@@ -1,7 +1,7 @@
 ---
 title: refactor: Enforce extension package resolution boundaries
 type: refactor
-status: active
+status: completed
 date: 2026-04-05
 origin: docs/brainstorms/2026-04-04-plugin-boundary-enforcement-requirements.md
 deepened: 2026-04-05
@@ -156,11 +156,11 @@ The current branch (`codex/plan-plugin-boundaries-followup`) is useful as a
 source of proven experiments, but it is too broad to land or to use as the
 direct basis for a focused PR. Its changes fall into three buckets:
 
-| Bucket | Carry forward to fresh branch? | Current examples |
-| --- | --- | --- |
-| Critical path | Yes | `extensions/*/tsconfig.json`, `extensions/tsconfig.base.json`, extension `package.json` `devDependencies.openclaw`, representative contract tests, type-stub/facade resolution fixes that keep package-local `tsc` viable |
-| Potentially useful but only if proven necessary | Maybe | `tsconfig.base.json`, `tsconfig.workspace.json`, narrowed root `tsconfig.json`, `packages/*/tsconfig.json`, `ui/tsconfig.json` |
-| Not needed for the fresh fail-closed PR | No | boundary breakage report script, stale inventory refresh, broad docs churn, unrelated CI/mock fixes, lockfile churn unrelated to the fresh branch, the extension-lint experiment |
+| Bucket                                          | Carry forward to fresh branch? | Current examples                                                                                                                                                                                                          |
+| ----------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Critical path                                   | Yes                            | `extensions/*/tsconfig.json`, `extensions/tsconfig.base.json`, extension `package.json` `devDependencies.openclaw`, representative contract tests, type-stub/facade resolution fixes that keep package-local `tsc` viable |
+| Potentially useful but only if proven necessary | Maybe                          | `tsconfig.base.json`, `tsconfig.workspace.json`, narrowed root `tsconfig.json`, `packages/*/tsconfig.json`, `ui/tsconfig.json`                                                                                            |
+| Not needed for the fresh fail-closed PR         | No                             | boundary breakage report script, stale inventory refresh, broad docs churn, unrelated CI/mock fixes, lockfile churn unrelated to the fresh branch, the extension-lint experiment                                          |
 
 The critical-path commits from the current branch are:
 
@@ -178,7 +178,7 @@ necessary for the focused implementation.
 
 ### Fresh-Branch Cherry-Pick Map
 
-Use the prototype branch as a source of *content*, not as a branch to continue
+Use the prototype branch as a source of _content_, not as a branch to continue
 stacking on. The fresh branch should start from `main` and re-apply only the
 following buckets.
 
@@ -531,13 +531,13 @@ bringing over the prototype collateral:
 > review, not implementation specification. The implementing agent should treat
 > it as context, not code to reproduce._
 
-| Concern | Current model | Narrow follow-up target |
-| --- | --- | --- |
-| Allowed SDK import resolution | `paths` from `extensions/tsconfig.base.json` to `src/plugin-sdk/*.ts` | normal workspace/package resolution through `openclaw` package `exports` |
-| Extension project source boundary | local `include` / `exclude` only | package-local `rootDir` so relative escapes trigger `TS6059` |
-| Emitted SDK declaration boundary | `dist/plugin-sdk` still references `extensions/**` in some surfaces | extension-consumable SDK declarations avoid sibling extension source references |
-| Failure mode for illegal relative imports | custom script only | editor and `tsc -p extensions/<id>` failure |
-| Delivery strategy | broad branch with many collateral changes | fresh branch that cherry-picks only critical-path topology and package-resolution work |
+| Concern                                   | Current model                                                         | Narrow follow-up target                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Allowed SDK import resolution             | `paths` from `extensions/tsconfig.base.json` to `src/plugin-sdk/*.ts` | normal workspace/package resolution through `openclaw` package `exports`               |
+| Extension project source boundary         | local `include` / `exclude` only                                      | package-local `rootDir` so relative escapes trigger `TS6059`                           |
+| Emitted SDK declaration boundary          | `dist/plugin-sdk` still references `extensions/**` in some surfaces   | extension-consumable SDK declarations avoid sibling extension source references        |
+| Failure mode for illegal relative imports | custom script only                                                    | editor and `tsc -p extensions/<id>` failure                                            |
+| Delivery strategy                         | broad branch with many collateral changes                             | fresh branch that cherry-picks only critical-path topology and package-resolution work |
 
 ```mermaid
 flowchart TB
@@ -588,6 +588,7 @@ give each bundled plugin its own TypeScript project and a real dependency on the
 **Dependencies:** None
 
 **Files:**
+
 - Modify: `extensions/tsconfig.base.json`
 - Create: `extensions/*/tsconfig.json`
 - Modify: `extensions/*/package.json`
@@ -598,6 +599,7 @@ give each bundled plugin its own TypeScript project and a real dependency on the
 - Test: `src/plugins/contracts/plugin-sdk-package-contract-guardrails.test.ts`
 
 **Approach:**
+
 - Reapply the useful part of `de8a4e9044` and `b57fd9665a` on a fresh branch,
   but do not automatically carry over:
   - `packages/*/tsconfig.json`
@@ -615,10 +617,12 @@ prototype branch, then trim rather than expanding immediately into the broader
 topology split.
 
 **Patterns to follow:**
+
 - `de8a4e9044` as the source for extension-local `tsconfig.json` file shape
 - `b57fd9665a` as the source for the `openclaw` workspace dev dependency
 
 **Test scenarios:**
+
 - Happy path: every bundled plugin package under `extensions/*` has a local
   `tsconfig.json` that is package-local in `include` and `exclude`.
 - Happy path: every bundled plugin package that needs the SDK declares
@@ -629,6 +633,7 @@ topology split.
   project in editor tooling rather than relying only on root inferred behavior.
 
 **Verification:**
+
 - The fresh branch contains only extension-local topology and package-contract
   prep, not the broader scaffolding from the prototype branch.
 
@@ -643,6 +648,7 @@ program.
 **Dependencies:** Unit 1
 
 **Files:**
+
 - Modify: `tsconfig.plugin-sdk.dts.json`
 - Modify: `package.json`
 - Modify: `scripts/lib/plugin-sdk-entrypoints.json`
@@ -652,6 +658,7 @@ program.
 - Test: `src/plugins/contracts/extension-package-project-boundaries.test.ts`
 
 **Approach:**
+
 - Audit the declarations that an extension TypeScript project sees when it
   imports `openclaw/plugin-sdk/*`.
 - Remove or isolate declaration surfaces that reference `extensions/**` or
@@ -662,10 +669,12 @@ program.
   broader root-package declarations still exist for internal use.
 
 **Patterns to follow:**
+
 - `package.json` `exports` for published SDK subpaths
 - `tsconfig.plugin-sdk.dts.json` as the existing declaration-emission seam
 
 **Test scenarios:**
+
 - Happy path: importing `openclaw/plugin-sdk/provider-model-shared` from an
   extension resolves without pulling `src/plugin-sdk/*.ts` into the extension
   program.
@@ -680,6 +689,7 @@ program.
   failures caused by allowed SDK imports.
 
 **Verification:**
+
 - Extension projects can typecheck against `openclaw/plugin-sdk/*` without
   compiling raw `src/plugin-sdk/*.ts` or sibling extension source files.
 
@@ -693,11 +703,13 @@ program.
 **Dependencies:** Unit 2
 
 **Files:**
+
 - Modify: `extensions/tsconfig.base.json`
 - Modify: `src/plugins/contracts/extension-package-project-boundaries.test.ts`
 - Test: `src/plugins/contracts/extension-package-project-boundaries.test.ts`
 
 **Approach:**
+
 - Remove the extension-specific `paths` entries that map
   `openclaw/plugin-sdk/*` to `src/plugin-sdk/*.ts`.
 - Preserve only the minimum type stub mappings that are genuinely about missing
@@ -706,11 +718,13 @@ program.
   alias behavior.
 
 **Patterns to follow:**
+
 - Existing workspace dependency contract from
   `src/plugins/contracts/plugin-sdk-package-contract-guardrails.test.ts`
 - Node/package `exports` behavior already declared in `package.json`
 
 **Test scenarios:**
+
 - Happy path: `extensions/xai` continues to typecheck its allowed
   `openclaw/plugin-sdk/*` imports using package resolution.
 - Error path: if `extensions/tsconfig.base.json` reintroduces a direct
@@ -720,6 +734,7 @@ program.
   the package boundary rather than raw source aliases.
 
 **Verification:**
+
 - Extension TS configs no longer teach TypeScript that `src/plugin-sdk/*.ts`
   is the legal source for `openclaw/plugin-sdk/*` imports.
 
@@ -733,6 +748,7 @@ normal TypeScript/editor errors.
 **Dependencies:** Unit 3
 
 **Files:**
+
 - Modify: `extensions/*/tsconfig.json`
 - Modify: `src/plugins/contracts/extension-package-project-boundaries.test.ts`
 - Modify: `scripts/check-extension-plugin-sdk-boundary.mjs`
@@ -740,6 +756,7 @@ normal TypeScript/editor errors.
 - Test: `test/extension-boundary-breakage-report.test.ts`
 
 **Approach:**
+
 - Add a package-local `rootDir` to bundled plugin TypeScript projects.
 - Keep root-level extension barrels such as `api.ts`, `runtime-api.ts`, and
   `index.ts` within the allowed source root.
@@ -751,11 +768,13 @@ normal TypeScript/editor errors.
   - illegal `../../src/**` and sibling-extension relative imports now fail
 
 **Patterns to follow:**
+
 - The `microapps-core` package pattern of `rootDir: "src"` as the comparison
   model, adapted here to package-root `rootDir: "."` because OpenClaw extensions
   have package-root barrels
 
 **Test scenarios:**
+
 - Happy path: `extensions/xai/api.ts` can import
   `openclaw/plugin-sdk/provider-model-shared` and same-package local files
   without `TS6059`.
@@ -768,6 +787,7 @@ normal TypeScript/editor errors.
   reports zero allowed-surface regressions.
 
 **Verification:**
+
 - Illegal relative escapes from extension production files fail in TypeScript
   and VS Code instead of only in the custom boundary script.
 
@@ -782,6 +802,7 @@ collateral.
 **Dependencies:** Units 1-4
 
 **Files:**
+
 - Modify: `docs/plugins/architecture.md`
 - Modify: `docs/plugins/sdk-overview.md`
 - Modify: `docs/plans/2026-04-04-001-refactor-plugin-boundary-enforcement-plan.md`
@@ -790,6 +811,7 @@ collateral.
 - Test: `src/plugins/contracts/extension-package-project-boundaries.test.ts`
 
 **Approach:**
+
 - Record that the narrow PR intentionally solves extension compiler/package
   resolution first and intentionally omits prototype-branch collateral such as:
   - boundary-report script additions
@@ -802,12 +824,15 @@ collateral.
   package resolution and `rootDir`, not just local config presence.
 
 **Patterns to follow:**
+
 - Existing docs/plan cross-linking style from the current brainstorm and plan
 
 **Test scenarios:**
+
 - Test expectation: none -- documentation and contract-test wiring only.
 
 **Verification:**
+
 - Reviewers can understand why this narrower PR exists, what it improves, and
   how it composes with the broader plugin-boundary work.
 
@@ -832,14 +857,14 @@ collateral.
 
 ## Risks & Dependencies
 
-| Risk | Mitigation |
-|------|------------|
-| The SDK declaration surface still leaks extension-owned modules after the first pass | Add targeted declaration-surface tests and inspect emitted `.d.ts` outputs as part of the unit verification |
-| `rootDir` rollout breaks allowed SDK imports and creates noisy false positives | Land `rootDir` only after package resolution and declaration cleanup are in place |
-| Narrow PR accidentally grows into a whole-repo package-split effort | Keep file scope limited to `extensions/*`, plugin SDK type/declaration surfaces, contract tests, and docs |
-| VS Code behavior still differs from CLI `tsc` behavior | Use representative package-local `tsc -p extensions/<id>` checks plus manual editor validation before claiming success |
+| Risk                                                                                                                                         | Mitigation                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The SDK declaration surface still leaks extension-owned modules after the first pass                                                         | Add targeted declaration-surface tests and inspect emitted `.d.ts` outputs as part of the unit verification                                        |
+| `rootDir` rollout breaks allowed SDK imports and creates noisy false positives                                                               | Land `rootDir` only after package resolution and declaration cleanup are in place                                                                  |
+| Narrow PR accidentally grows into a whole-repo package-split effort                                                                          | Keep file scope limited to `extensions/*`, plugin SDK type/declaration surfaces, contract tests, and docs                                          |
+| VS Code behavior still differs from CLI `tsc` behavior                                                                                       | Use representative package-local `tsc -p extensions/<id>` checks plus manual editor validation before claiming success                             |
 | The fresh branch still requires more files than reviewers expect because every extension needs a local TS project or package manifest update | Make that cost explicit in the PR description and keep all non-essential collateral out so the remaining breadth is clearly in service of the goal |
-| Some prototype-branch "prep" changes turn out to be unnecessary when rebuilt fresh | Reapply prototype commits selectively and validate each bucket before carrying it forward |
+| Some prototype-branch "prep" changes turn out to be unnecessary when rebuilt fresh                                                           | Reapply prototype commits selectively and validate each bucket before carrying it forward                                                          |
 
 ## Documentation / Operational Notes
 
