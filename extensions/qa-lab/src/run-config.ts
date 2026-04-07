@@ -2,6 +2,7 @@ import path from "node:path";
 import type { QaSeedScenario } from "./scenario-catalog.js";
 
 export type QaProviderMode = "mock-openai" | "live-frontier";
+export type QaProviderModeInput = QaProviderMode | "live-openai";
 
 export type QaLabRunSelection = {
   providerMode: QaProviderMode;
