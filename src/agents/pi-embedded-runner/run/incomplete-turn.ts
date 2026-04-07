@@ -80,6 +80,7 @@ export const PLANNING_ONLY_RETRY_INSTRUCTION =
   "The previous assistant turn only described the plan. Do not restate the plan. Act now: take the first concrete tool action you can. If a real blocker prevents action, reply with the exact blocker in one sentence.";
 export const ACK_EXECUTION_FAST_PATH_INSTRUCTION =
   "The latest user message is a short approval to proceed. Do not recap or restate the plan. Start with the first concrete tool action immediately. Keep any user-facing follow-up brief and natural.";
+const MAX_RETRY_STEP_CHARS = 160;
 
 export type PlanningOnlyPlanDetails = {
   explanation: string;
@@ -215,6 +216,23 @@ export function extractPlanningOnlyPlanDetails(text: string): PlanningOnlyPlanDe
   };
 }
 
+function buildPlanningOnlyRetryInstruction(step: string | undefined): string {
+  const normalizedStep = step?.replace(/\s+/g, " ").trim();
+  if (!normalizedStep) {
+    return PLANNING_ONLY_RETRY_INSTRUCTION;
+  }
+  const truncatedStep =
+    normalizedStep.length > MAX_RETRY_STEP_CHARS
+      ? `${normalizedStep.slice(0, MAX_RETRY_STEP_CHARS - 3).trimEnd()}...`
+      : normalizedStep;
+  return (
+    "The previous assistant turn only described the plan. Do not restate the plan. " +
+    `Execute the first pending step you already proposed: ${truncatedStep}\n` +
+    "If that step needs a tool, call it immediately. " +
+    "If a real blocker prevents action, reply with the exact blocker in one sentence."
+  );
+}
+
 export function resolvePlanningOnlyRetryInstruction(params: {
   provider?: string;
   modelId?: string;
@@ -257,5 +275,5 @@ export function resolvePlanningOnlyRetryInstruction(params: {
   if (PLANNING_ONLY_COMPLETION_RE.test(text)) {
     return null;
   }
-  return PLANNING_ONLY_RETRY_INSTRUCTION;
+  return buildPlanningOnlyRetryInstruction(extractPlanningOnlyPlanDetails(text)?.steps[0]);
 }

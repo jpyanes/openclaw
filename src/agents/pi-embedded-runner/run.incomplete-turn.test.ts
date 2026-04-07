@@ -70,6 +70,25 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Do not restate the plan");
   });
 
+  it("reuses the first pending step in the retry instruction", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      toolsAvailable: true,
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: [
+          "I'll inspect the repo. Then I'll patch the issue. Finally I'll run the checks.",
+        ],
+      }),
+    });
+
+    expect(retryInstruction).toContain("Execute the first pending step you already proposed:");
+    expect(retryInstruction).toContain("I'll inspect the repo.");
+    expect(retryInstruction).toContain("If that step needs a tool, call it immediately.");
+  });
+
   it("does not retry planning-only detection after tool activity", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
       provider: "openai",
