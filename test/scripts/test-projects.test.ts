@@ -256,6 +256,38 @@ describe("scripts/test-projects full-suite sharding", () => {
     ]);
   });
 
+  it("can scope untargeted full-suite runs to sdk contracts only", () => {
+    const previous = process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP;
+    process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP = "sdk-contracts";
+    const plans = buildFullSuiteVitestRunPlans([], process.cwd());
+    if (previous === undefined) {
+      delete process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP;
+    } else {
+      process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP = previous;
+    }
+
+    expect(plans.map((plan) => plan.config)).toEqual([
+      "vitest.full-core-contracts.config.ts",
+      "vitest.full-sdk-surfaces.config.ts",
+    ]);
+  });
+
+  it("can scope untargeted full-suite runs to sdk extensions only", () => {
+    const previous = process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP;
+    process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP = "sdk-extensions";
+    const plans = buildFullSuiteVitestRunPlans([], process.cwd());
+    if (previous === undefined) {
+      delete process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP;
+    } else {
+      process.env.OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP = previous;
+    }
+
+    expect(plans.map((plan) => plan.config)).toEqual([
+      "vitest.full-core-bundled.config.ts",
+      "vitest.full-extensions.config.ts",
+    ]);
+  });
+
   it("can expand full-suite shards to project configs for perf experiments", () => {
     const previous = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
     process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = "1";

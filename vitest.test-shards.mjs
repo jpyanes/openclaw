@@ -45,13 +45,13 @@ export const fullSuiteVitestShards = [
   },
   {
     config: "vitest.full-core-contracts.config.ts",
-    group: "sdk",
+    group: "sdk-contracts",
     name: "core-contracts",
     projects: ["vitest.contracts.config.ts"],
   },
   {
     config: "vitest.full-core-bundled.config.ts",
-    group: "sdk",
+    group: "sdk-extensions",
     name: "core-bundled",
     projects: ["vitest.bundled.config.ts"],
   },
@@ -93,7 +93,7 @@ export const fullSuiteVitestShards = [
   },
   {
     config: "vitest.full-sdk-surfaces.config.ts",
-    group: "sdk",
+    group: "sdk-contracts",
     name: "sdk-surfaces",
     projects: [
       "vitest.plugin-sdk-light.config.ts",
@@ -114,7 +114,7 @@ export const fullSuiteVitestShards = [
   },
   {
     config: "vitest.full-extensions.config.ts",
-    group: "sdk",
+    group: "sdk-extensions",
     name: "extensions",
     projects: [
       "vitest.extension-acpx.config.ts",

@@ -42,6 +42,8 @@ jobs:
       checks_matrix: ${{ steps.manifest.outputs.checks_matrix }}
       run_checks_sdk: ${{ steps.manifest.outputs.run_checks_sdk }}
       checks_sdk_matrix: ${{ steps.manifest.outputs.checks_sdk_matrix }}
+      run_checks_sdk_extensions: ${{ steps.manifest.outputs.run_checks_sdk_extensions }}
+      checks_sdk_extensions_matrix: ${{ steps.manifest.outputs.checks_sdk_extensions_matrix }}
       run_extension_fast: ${{ steps.manifest.outputs.run_extension_fast }}
       extension_fast_matrix: ${{ steps.manifest.outputs.extension_fast_matrix }}
       run_check: ${{ steps.manifest.outputs.run_check }}
@@ -237,7 +239,20 @@ jobs:
             run_checks_sdk: runNode,
             checks_sdk_matrix: createMatrix(
               runNode
-                ? [{ check_name: "checks-node-sdk", runtime: "node", task: "test-sdk" }]
+                ? [{ check_name: "checks-node-sdk-contracts", runtime: "node", task: "test-sdk-contracts" }]
+                : [],
+            ),
+            run_checks_sdk_extensions: runNode,
+            checks_sdk_extensions_matrix: createMatrix(
+              runNode
+                ? createExtensionTestShards({
+                    shardCount: DEFAULT_EXTENSION_TEST_SHARD_COUNT,
+                  }).map((shard) => ({
+                    check_name: `checks-node-sdk-extensions-shard-${shard.index + 1}`,
+                    extensions_csv: shard.extensionIds.join(","),
+                    shard_index: shard.index + 1,
+                    task: "sdk-extensions-batch",
+                  }))
                 : [],
             ),
             run_extension_fast: hasChangedExtensions,
@@ -618,11 +633,11 @@ jobs:
           use-sticky-disk: "false"
 
       - name: Configure Node SDK test resources
-        if: matrix.runtime == 'node' && matrix.task == 'test-sdk'
+        if: matrix.runtime == 'node' && matrix.task == 'test-sdk-contracts'
         run: |
           echo "OPENCLAW_VITEST_MAX_WORKERS=2" >> "$GITHUB_ENV"
           echo "OPENCLAW_TEST_PROJECTS_PARALLEL=6" >> "$GITHUB_ENV"
-          echo "OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP=sdk" >> "$GITHUB_ENV"
+          echo "OPENCLAW_TEST_PROJECTS_FULL_SUITE_GROUP=sdk-contracts" >> "$GITHUB_ENV"
 
       - name: Download dist artifact
         uses: actions/download-artifact@v8
@@ -644,7 +659,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$TASK" in
-            test-sdk)
+            test-sdk-contracts)
               pnpm test
               ;;
             *)
@@ -652,6 +667,50 @@ jobs:
               exit 1
               ;;
           esac
+
+  checks-sdk-extensions-shard:
+    name: ${{ matrix.check_name }}
+    needs: [preflight]
+    if: needs.preflight.outputs.run_checks_sdk_extensions == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.preflight.outputs.checks_sdk_extensions_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+          use-sticky-disk: "false"
+
+      - name: Run sdk extension shard
+        env:
+          OPENCLAW_VITEST_MAX_WORKERS: 2
+          OPENCLAW_EXTENSION_BATCH: ${{ matrix.extensions_csv }}
+        run: pnpm test:extensions:batch -- "$OPENCLAW_EXTENSION_BATCH"
+
+  checks-sdk-extensions:
+    name: checks-node-sdk-extensions
+    needs: [preflight, checks-sdk-extensions-shard]
+    if: always() && needs.preflight.outputs.run_checks_sdk_extensions == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Verify sdk extension shards
+        env:
+          SHARD_RESULT: ${{ needs.checks-sdk-extensions-shard.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "SDK extension shard checks failed: $SHARD_RESULT" >&2
+            exit 1
+          fi
 
   extension-fast:
     name: "extension-fast"

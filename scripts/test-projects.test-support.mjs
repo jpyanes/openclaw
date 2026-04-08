@@ -622,14 +622,23 @@ export function buildFullSuiteVitestRunPlans(args, cwd = process.cwd()) {
   }
   const expandToProjectConfigs = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS === "1";
   const requestedGroup = process.env[FULL_SUITE_GROUP_ENV_KEY];
-  if (requestedGroup && requestedGroup !== "core" && requestedGroup !== "sdk") {
+  if (
+    requestedGroup &&
+    requestedGroup !== "core" &&
+    requestedGroup !== "sdk" &&
+    requestedGroup !== "sdk-contracts" &&
+    requestedGroup !== "sdk-extensions"
+  ) {
     throw new Error(
-      `${FULL_SUITE_GROUP_ENV_KEY} must be "core" or "sdk", got ${JSON.stringify(requestedGroup)}`,
+      `${FULL_SUITE_GROUP_ENV_KEY} must be "core", "sdk", "sdk-contracts", or "sdk-extensions", got ${JSON.stringify(requestedGroup)}`,
     );
   }
-  const shards = requestedGroup
-    ? fullSuiteVitestShards.filter((shard) => shard.group === requestedGroup)
-    : fullSuiteVitestShards;
+  const shards =
+    requestedGroup === "sdk"
+      ? fullSuiteVitestShards.filter((shard) => shard.group.startsWith("sdk"))
+      : requestedGroup
+        ? fullSuiteVitestShards.filter((shard) => shard.group === requestedGroup)
+        : fullSuiteVitestShards;
   return shards.flatMap((shard) => {
     const configs = expandToProjectConfigs ? shard.projects : [shard.config];
     return configs.map((config) => ({
