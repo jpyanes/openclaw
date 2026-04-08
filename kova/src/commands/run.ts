@@ -1,11 +1,12 @@
 import { resolveKovaBackend } from "../backends/registry.js";
-import type { KovaRunTarget } from "../backends/types.js";
+import type { KovaBackendId, KovaRunTarget } from "../backends/types.js";
 import { createKovaRunId } from "../lib/run-id.js";
 import { renderArtifactSummary } from "../report.js";
 
 function parseRunOptions(args: string[]) {
   const options: {
     target?: KovaRunTarget;
+    backend?: KovaBackendId;
     providerMode?: "mock-openai" | "live-frontier";
     scenarioIds: string[];
   } = {
@@ -26,6 +27,13 @@ function parseRunOptions(args: string[]) {
       }
       continue;
     }
+    if (arg === "--backend") {
+      const value = rest.shift();
+      if (value === "host" || value === "multipass") {
+        options.backend = value;
+      }
+      continue;
+    }
     if (arg === "--scenario") {
       const value = rest.shift();
       if (value?.trim()) {
@@ -42,11 +50,12 @@ export async function runCommand(repoRoot: string, args: string[]) {
     throw new Error(`unsupported kova run target: ${String(options.target ?? "")}`);
   }
 
-  const backend = resolveKovaBackend(options.target);
+  const backend = resolveKovaBackend(options.target, options.backend);
   const artifact = await backend.run({
     repoRoot,
     runId: createKovaRunId(),
     target: options.target,
+    backend: options.backend,
     providerMode: options.providerMode,
     scenarioIds: options.scenarioIds.length > 0 ? options.scenarioIds : undefined,
   });

@@ -2,7 +2,7 @@ import { runQaAdapter } from "../adapters/qa.js";
 import type { KovaBackend } from "./types.js";
 
 export const qaBackend: KovaBackend = {
-  id: "qa-host",
+  id: "host",
   supportsTarget(target): target is "qa" {
     return target === "qa";
   },
