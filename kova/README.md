@@ -6,11 +6,17 @@ Kova is the OpenClaw verification platform. It runs verification workflows, reco
 
 ```bash
 pnpm kova --help
+pnpm kova run --help
+pnpm kova diff --help
+pnpm kova list runs --help
 pnpm kova run qa --scenario channel-chat-baseline
 pnpm kova run parallels --guest macos --mode fresh
 pnpm kova report latest
+pnpm kova report latest --target parallels --guest macos
 pnpm kova diff
+pnpm kova diff --target parallels --guest macos
 pnpm kova list runs
+pnpm kova list runs --target parallels --guest macos
 ```
 
 ## Core Concepts
@@ -23,6 +29,7 @@ pnpm kova list runs
 ## Current Scope
 
 - QA is the first Kova lane.
+- QA uses the `host` backend by default unless `--backend` is provided.
 - Host runtime and Multipass are the first backend surfaces.
 - Parallels is available as a guest-smoke target over the existing smoke scripts.
 - Multipass defaults to a curated QA core subset when `--scenario` is omitted.

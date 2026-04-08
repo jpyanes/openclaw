@@ -2,6 +2,7 @@ import { resolveKovaBackend } from "../backends/registry.js";
 import type { KovaBackendId, KovaRunTarget } from "../backends/types.js";
 import { findMissingKovaQaScenarioIds } from "../catalog/qa.js";
 import type { KovaRunArtifact, KovaVerdict } from "../contracts/run-artifact.js";
+import { isHelpFlag, renderRunHelp } from "../help.js";
 import { createKovaRunId } from "../lib/run-id.js";
 import { renderArtifactSummary } from "../report.js";
 
@@ -91,6 +92,10 @@ function resolveRunExitCode(artifact: KovaRunArtifact) {
 }
 
 export async function runCommand(repoRoot: string, args: string[]) {
+  if (isHelpFlag(args)) {
+    process.stdout.write(renderRunHelp());
+    return;
+  }
   const options = parseRunOptions(args);
   if (options.target !== "qa" && options.target !== "parallels") {
     throw new Error(`unsupported kova run target: ${String(options.target ?? "")}`);

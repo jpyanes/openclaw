@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { KovaRunSelectorFilters } from "./commands/selector-filters.js";
+import { matchesKovaSelectorFilters } from "./commands/selector-filters.js";
 import {
   block,
   bulletList,
@@ -14,7 +16,7 @@ import {
 } from "./console/format.js";
 import { kovaRunArtifactSchema, type KovaRunArtifact } from "./contracts/run-artifact.js";
 import { readJsonFile, resolveKovaRunDir, resolveKovaRunsDir } from "./lib/fs.js";
-import { hydrateKovaRunIndex, readKovaRunIndex } from "./lib/run-index.js";
+import { hydrateKovaRunIndex } from "./lib/run-index.js";
 
 export type KovaArtifactComparisonKind =
   | "comparable"
@@ -225,9 +227,13 @@ export function classifyArtifactComparison(
   };
 }
 
-export async function resolveLatestRunId(repoRoot: string) {
-  const index = await readKovaRunIndex(repoRoot).catch(() => null);
-  if (index?.latestRunId) {
+export async function resolveLatestRunId(repoRoot: string, filters?: KovaRunSelectorFilters) {
+  const index = await hydrateKovaRunIndex(repoRoot).catch(() => null);
+  if (index) {
+    const filteredRuns = index.runs.filter((entry) => matchesKovaSelectorFilters(entry, filters));
+    return filteredRuns.at(-1)?.runId;
+  }
+  if (!filters && index?.latestRunId) {
     return index.latestRunId;
   }
   const runsDir = resolveKovaRunsDir(repoRoot);
@@ -247,29 +253,35 @@ export async function resolveLatestRunId(repoRoot: string) {
   return runIds.at(-1);
 }
 
-export async function resolvePreviousRunId(repoRoot: string, runId?: string) {
+export async function resolvePreviousRunId(
+  repoRoot: string,
+  runId?: string,
+  filters?: KovaRunSelectorFilters,
+) {
   const index = await hydrateKovaRunIndex(repoRoot).catch(() => null);
   if (!index || index.runs.length === 0) {
     return undefined;
   }
-  const targetRunId = runId ?? index.latestRunId;
+  const filteredRuns = index.runs.filter((entry) => matchesKovaSelectorFilters(entry, filters));
+  const targetRunId = runId ?? filteredRuns.at(-1)?.runId ?? index.latestRunId;
   if (!targetRunId) {
     return undefined;
   }
-  const position = index.runs.findIndex((entry) => entry.runId === targetRunId);
+  const position = filteredRuns.findIndex((entry) => entry.runId === targetRunId);
   if (position <= 0) {
     return undefined;
   }
-  return index.runs[position - 1]?.runId;
+  return filteredRuns[position - 1]?.runId;
 }
 
-export async function resolveLatestPassRunId(repoRoot: string) {
+export async function resolveLatestPassRunId(repoRoot: string, filters?: KovaRunSelectorFilters) {
   const index = await hydrateKovaRunIndex(repoRoot).catch(() => null);
   if (!index || index.runs.length === 0) {
     return undefined;
   }
-  for (let position = index.runs.length - 1; position >= 0; position -= 1) {
-    const indexedRun = index.runs[position];
+  const filteredRuns = index.runs.filter((entry) => matchesKovaSelectorFilters(entry, filters));
+  for (let position = filteredRuns.length - 1; position >= 0; position -= 1) {
+    const indexedRun = filteredRuns[position];
     if (indexedRun?.verdict === "pass") {
       return indexedRun.runId;
     }
@@ -277,16 +289,21 @@ export async function resolveLatestPassRunId(repoRoot: string) {
   return undefined;
 }
 
-export async function resolvePreviousComparableRunId(repoRoot: string, runId?: string) {
+export async function resolvePreviousComparableRunId(
+  repoRoot: string,
+  runId?: string,
+  filters?: KovaRunSelectorFilters,
+) {
   const index = await hydrateKovaRunIndex(repoRoot).catch(() => null);
   if (!index || index.runs.length === 0) {
     return undefined;
   }
-  const candidateRunId = runId ?? index.latestRunId;
+  const filteredRuns = index.runs.filter((entry) => matchesKovaSelectorFilters(entry, filters));
+  const candidateRunId = runId ?? filteredRuns.at(-1)?.runId ?? index.latestRunId;
   if (!candidateRunId) {
     return undefined;
   }
-  const candidatePosition = index.runs.findIndex((entry) => entry.runId === candidateRunId);
+  const candidatePosition = filteredRuns.findIndex((entry) => entry.runId === candidateRunId);
   if (candidatePosition <= 0) {
     return undefined;
   }
@@ -295,7 +312,7 @@ export async function resolvePreviousComparableRunId(repoRoot: string, runId?: s
     return undefined;
   }
   for (let position = candidatePosition - 1; position >= 0; position -= 1) {
-    const candidate = index.runs[position];
+    const candidate = filteredRuns[position];
     if (!candidate) {
       continue;
     }
@@ -310,16 +327,21 @@ export async function resolvePreviousComparableRunId(repoRoot: string, runId?: s
   return undefined;
 }
 
-export async function resolveLatestComparablePassRunId(repoRoot: string, runId?: string) {
+export async function resolveLatestComparablePassRunId(
+  repoRoot: string,
+  runId?: string,
+  filters?: KovaRunSelectorFilters,
+) {
   const index = await hydrateKovaRunIndex(repoRoot).catch(() => null);
   if (!index || index.runs.length === 0) {
     return undefined;
   }
-  const candidateRunId = runId ?? index.latestRunId;
+  const filteredRuns = index.runs.filter((entry) => matchesKovaSelectorFilters(entry, filters));
+  const candidateRunId = runId ?? filteredRuns.at(-1)?.runId ?? index.latestRunId;
   if (!candidateRunId) {
     return undefined;
   }
-  const candidatePosition = index.runs.findIndex((entry) => entry.runId === candidateRunId);
+  const candidatePosition = filteredRuns.findIndex((entry) => entry.runId === candidateRunId);
   if (candidatePosition < 0) {
     return undefined;
   }
@@ -328,7 +350,7 @@ export async function resolveLatestComparablePassRunId(repoRoot: string, runId?:
     return undefined;
   }
   for (let position = candidatePosition - 1; position >= 0; position -= 1) {
-    const indexedRun = index.runs[position];
+    const indexedRun = filteredRuns[position];
     if (!indexedRun || indexedRun.verdict !== "pass") {
       continue;
     }

@@ -14,7 +14,18 @@ import {
   pageHeader,
   table,
 } from "../console/format.js";
+import {
+  isHelpFlag,
+  renderListBackendsHelp,
+  renderListCapabilitiesHelp,
+  renderListHelp,
+  renderListRunsHelp,
+  renderListScenariosHelp,
+  renderListSurfacesHelp,
+  renderListTargetsHelp,
+} from "../help.js";
 import { hydrateKovaRunIndex } from "../lib/run-index.js";
+import { matchesKovaSelectorFilters, parseKovaSelectorFilters } from "./selector-filters.js";
 
 const kovaListSubjects = [
   ["runs", "recorded verification runs"],
@@ -44,15 +55,35 @@ function formatGroupLabel(value: string) {
 function parseListArgs(args: string[]) {
   const json = args.includes("--json");
   const all = args.includes("--all");
-  const filteredArgs = args.filter((arg) => arg !== "--json" && arg !== "--all");
-  const [subject, maybeTarget] = filteredArgs;
-  const target = maybeTarget === "qa" || maybeTarget === "parallels" ? maybeTarget : undefined;
+  const retainedArgs = args.filter((arg) => arg !== "--json" && arg !== "--all");
+  const { filters, rest } = parseKovaSelectorFilters(retainedArgs);
+  const [subject, maybeTarget] = rest;
+  const target =
+    filters.target ??
+    (maybeTarget === "qa" || maybeTarget === "parallels" ? maybeTarget : undefined);
   return {
     subject,
     target,
+    backend: filters.backend,
+    guest: filters.guest,
+    mode: filters.mode,
+    provider: filters.provider,
     all,
     json,
   };
+}
+
+function filterRuns(
+  runs: Awaited<ReturnType<typeof hydrateKovaRunIndex>>["runs"],
+  filters: {
+    target?: KovaRunTarget;
+    backend?: string;
+    guest?: string;
+    mode?: string;
+    provider?: string;
+  },
+) {
+  return runs.filter((run) => matchesKovaSelectorFilters(run, filters));
 }
 
 function groupLines<T>(items: T[], keyOf: (item: T) => string, render: (item: T) => string) {
@@ -158,8 +189,22 @@ function renderListSubjects() {
 function renderRunLines(
   latestRunId: string | undefined,
   runs: Awaited<ReturnType<typeof hydrateKovaRunIndex>>["runs"],
+  filters: {
+    target?: KovaRunTarget;
+    backend?: string;
+    guest?: string;
+    mode?: string;
+    provider?: string;
+  },
   showAll = false,
 ) {
+  const filterLabels = [
+    filters.target ? `target=${filters.target}` : "",
+    filters.backend ? `backend=${filters.backend}` : "",
+    filters.guest ? `guest=${filters.guest}` : "",
+    filters.mode ? `mode=${filters.mode}` : "",
+    filters.provider ? `provider=${filters.provider}` : "",
+  ].filter(Boolean);
   const visibleRuns = showAll ? runs.toReversed() : runs.toReversed().slice(0, 12);
   const verdictCounts = runs.reduce<Record<string, number>>((counts, run) => {
     counts[run.verdict] = (counts[run.verdict] ?? 0) + 1;
@@ -169,7 +214,11 @@ function renderRunLines(
     pageHeader(
       "Run History",
       `${runs.length} recorded run${runs.length === 1 ? "" : "s"}${latestRunId ? ` | latest ${latestRunId}` : ""}`,
-      showAll ? undefined : "Showing the most recent 12. Use --all for full history.",
+      filterLabels.length > 0
+        ? `Filtered by ${filterLabels.join(", ")}${showAll ? "" : " | most recent 12 shown"}`
+        : showAll
+          ? undefined
+          : "Showing the most recent 12. Use --all for full history.",
     ),
     block(
       "Summary",
@@ -183,22 +232,56 @@ function renderRunLines(
     ),
     block(
       "History",
-      table(
-        ["updated", "verdict", "run", "target", "backend", "duration"],
-        visibleRuns.map((run) => [
-          formatIsoTimestamp(run.updatedAt),
-          run.verdict.toUpperCase(),
-          run.runId,
-          formatTargetLabel(run.selection.target),
-          run.backend.id ?? run.backend.kind,
-          formatDuration(run.timing.durationMs),
-        ]),
-      ),
+      visibleRuns.length > 0
+        ? table(
+            ["updated", "verdict", "run", "target", "backend", "axes", "duration"],
+            visibleRuns.map((run) => [
+              formatIsoTimestamp(run.updatedAt),
+              run.verdict.toUpperCase(),
+              run.runId,
+              formatTargetLabel(run.selection.target),
+              run.backend.id ?? run.backend.kind,
+              Object.entries(run.selection.axes ?? {})
+                .map(([key, value]) => `${key}=${String(value)}`)
+                .join(", ") || "none",
+              formatDuration(run.timing.durationMs),
+            ]),
+          )
+        : [muted("No runs matched the current filters.")],
     ),
   ]);
 }
 
 export async function listCommand(repoRoot: string, args: string[]) {
+  if (isHelpFlag(args)) {
+    const subject = args.find((arg) => arg !== "--help" && arg !== "-h");
+    if (subject === "runs") {
+      process.stdout.write(renderListRunsHelp());
+      return;
+    }
+    if (subject === "targets") {
+      process.stdout.write(renderListTargetsHelp());
+      return;
+    }
+    if (subject === "backends") {
+      process.stdout.write(renderListBackendsHelp());
+      return;
+    }
+    if (subject === "scenarios") {
+      process.stdout.write(renderListScenariosHelp());
+      return;
+    }
+    if (subject === "surfaces") {
+      process.stdout.write(renderListSurfacesHelp());
+      return;
+    }
+    if (subject === "capabilities") {
+      process.stdout.write(renderListCapabilitiesHelp());
+      return;
+    }
+    process.stdout.write(renderListHelp());
+    return;
+  }
   const options = parseListArgs(args);
 
   if (!options.subject) {
@@ -223,12 +306,27 @@ export async function listCommand(repoRoot: string, args: string[]) {
 
   if (options.subject === "runs") {
     const index = await hydrateKovaRunIndex(repoRoot);
+    const filteredRuns = filterRuns(index.runs, {
+      target: options.target,
+      backend: options.backend,
+      guest: options.guest,
+      mode: options.mode,
+      provider: options.provider,
+    });
+    const latestRunId = filteredRuns.at(-1)?.runId;
     if (options.json) {
       process.stdout.write(
         `${JSON.stringify(
           {
-            latestRunId: index.latestRunId ?? null,
-            runs: index.runs,
+            latestRunId: latestRunId ?? null,
+            filters: {
+              target: options.target ?? null,
+              backend: options.backend ?? null,
+              guest: options.guest ?? null,
+              mode: options.mode ?? null,
+              provider: options.provider ?? null,
+            },
+            runs: filteredRuns,
           },
           null,
           2,
@@ -236,7 +334,20 @@ export async function listCommand(repoRoot: string, args: string[]) {
       );
       return;
     }
-    process.stdout.write(renderRunLines(index.latestRunId, index.runs, options.all));
+    process.stdout.write(
+      renderRunLines(
+        latestRunId,
+        filteredRuns,
+        {
+          target: options.target,
+          backend: options.backend,
+          guest: options.guest,
+          mode: options.mode,
+          provider: options.provider,
+        },
+        options.all,
+      ),
+    );
     return;
   }
 

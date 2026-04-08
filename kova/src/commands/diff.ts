@@ -1,3 +1,4 @@
+import { isHelpFlag, renderDiffHelp } from "../help.js";
 import {
   diffArtifacts,
   readKovaArtifact,
@@ -8,6 +9,20 @@ import {
   resolvePreviousComparableRunId,
   resolvePreviousRunId,
 } from "../report.js";
+import {
+  formatKovaSelectorFilters,
+  hasKovaSelectorFilters,
+  parseKovaSelectorFilters,
+  type KovaRunSelectorFilters,
+} from "./selector-filters.js";
+
+function readFlagValue(args: string[], index: number, flag: string) {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`missing value for ${flag}.`);
+  }
+  return value;
+}
 
 function parseDiffArgs(args: string[]) {
   const json = args.includes("--json");
@@ -23,64 +38,81 @@ function parseDiffArgs(args: string[]) {
       | undefined,
     json,
   };
-  const rest: string[] = [];
+  const retainedArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
       continue;
     }
     if (arg === "--baseline") {
-      options.baselineSelector = args[index + 1];
+      options.baselineSelector = readFlagValue(args, index, "--baseline");
       index += 1;
       continue;
     }
     if (arg === "--candidate") {
-      options.candidateSelector = args[index + 1];
+      options.candidateSelector = readFlagValue(args, index, "--candidate");
       index += 1;
       continue;
     }
     if (arg === "--fail-on") {
-      const value = args[index + 1];
+      const value = readFlagValue(args, index, "--fail-on");
       if (
-        value === "regression" ||
-        value === "mixed-change" ||
-        value === "compatibility-delta" ||
-        value === "informational-drift" ||
-        value === "any-delta"
+        value !== "regression" &&
+        value !== "mixed-change" &&
+        value !== "compatibility-delta" &&
+        value !== "informational-drift" &&
+        value !== "any-delta"
       ) {
-        options.failOn = value;
+        throw new Error(
+          `unsupported Kova diff gate: ${value}. Use 'kova --help' to inspect supported fail-on gates.`,
+        );
       }
+      options.failOn = value;
       index += 1;
       continue;
     }
-    rest.push(arg);
+    retainedArgs.push(arg);
   }
+  const { filters, rest } = parseKovaSelectorFilters(retainedArgs);
   return {
     baselineSelector: options.baselineSelector ?? rest[0] ?? "auto",
     candidateSelector: options.candidateSelector ?? rest[1] ?? "latest",
+    filters,
     failOn: options.failOn,
     json,
   };
 }
 
-async function resolveDiffSelector(repoRoot: string, selector: string) {
+async function resolveDiffSelector(
+  repoRoot: string,
+  selector: string,
+  filters: KovaRunSelectorFilters,
+) {
   if (selector === "latest") {
-    return await resolveLatestRunId(repoRoot);
+    return await resolveLatestRunId(repoRoot, filters);
   }
   if (selector === "previous") {
-    const latestRunId = await resolveLatestRunId(repoRoot);
-    return latestRunId ? await resolvePreviousRunId(repoRoot, latestRunId) : undefined;
+    const latestRunId = await resolveLatestRunId(repoRoot, filters);
+    return latestRunId ? await resolvePreviousRunId(repoRoot, latestRunId, filters) : undefined;
   }
   if (selector === "latest-pass") {
-    return await resolveLatestPassRunId(repoRoot);
+    return await resolveLatestPassRunId(repoRoot, filters);
   }
   return selector;
 }
 
-async function resolveAutoBaselineRunId(repoRoot: string, candidateRunId: string) {
+async function resolveAutoBaselineRunId(
+  repoRoot: string,
+  candidateRunId: string,
+  filters: KovaRunSelectorFilters,
+) {
   const candidateArtifact = await readKovaArtifact(repoRoot, candidateRunId);
   if (candidateArtifact.verdict === "pass" || candidateArtifact.verdict === "skipped") {
-    const previousComparableRunId = await resolvePreviousComparableRunId(repoRoot, candidateRunId);
+    const previousComparableRunId = await resolvePreviousComparableRunId(
+      repoRoot,
+      candidateRunId,
+      filters,
+    );
     if (previousComparableRunId) {
       return {
         runId: previousComparableRunId,
@@ -90,6 +122,7 @@ async function resolveAutoBaselineRunId(repoRoot: string, candidateRunId: string
     const latestComparablePassRunId = await resolveLatestComparablePassRunId(
       repoRoot,
       candidateRunId,
+      filters,
     );
     return latestComparablePassRunId
       ? {
@@ -101,6 +134,7 @@ async function resolveAutoBaselineRunId(repoRoot: string, candidateRunId: string
   const latestComparablePassRunId = await resolveLatestComparablePassRunId(
     repoRoot,
     candidateRunId,
+    filters,
   );
   if (latestComparablePassRunId) {
     return {
@@ -108,7 +142,11 @@ async function resolveAutoBaselineRunId(repoRoot: string, candidateRunId: string
       resolvedBy: "latest-comparable-pass",
     };
   }
-  const previousComparableRunId = await resolvePreviousComparableRunId(repoRoot, candidateRunId);
+  const previousComparableRunId = await resolvePreviousComparableRunId(
+    repoRoot,
+    candidateRunId,
+    filters,
+  );
   return previousComparableRunId
     ? {
         runId: previousComparableRunId,
@@ -118,20 +156,28 @@ async function resolveAutoBaselineRunId(repoRoot: string, candidateRunId: string
 }
 
 export async function diffCommand(repoRoot: string, args: string[]) {
+  if (isHelpFlag(args)) {
+    process.stdout.write(renderDiffHelp());
+    return;
+  }
   const options = parseDiffArgs(args);
-  const candidateRunId = await resolveDiffSelector(repoRoot, options.candidateSelector);
+  const candidateRunId = await resolveDiffSelector(
+    repoRoot,
+    options.candidateSelector,
+    options.filters,
+  );
   const autoBaseline =
     options.baselineSelector === "auto" && candidateRunId
-      ? await resolveAutoBaselineRunId(repoRoot, candidateRunId)
+      ? await resolveAutoBaselineRunId(repoRoot, candidateRunId, options.filters)
       : undefined;
   const baselineRunId =
     options.baselineSelector === "auto"
       ? autoBaseline?.runId
       : options.baselineSelector === "previous"
-        ? await resolvePreviousComparableRunId(repoRoot, candidateRunId)
+        ? await resolvePreviousComparableRunId(repoRoot, candidateRunId, options.filters)
         : options.baselineSelector === "latest-pass"
-          ? await resolveLatestComparablePassRunId(repoRoot, candidateRunId)
-          : await resolveDiffSelector(repoRoot, options.baselineSelector);
+          ? await resolveLatestComparablePassRunId(repoRoot, candidateRunId, options.filters)
+          : await resolveDiffSelector(repoRoot, options.baselineSelector, options.filters);
 
   if (!baselineRunId || !candidateRunId) {
     if (
@@ -139,14 +185,22 @@ export async function diffCommand(repoRoot: string, args: string[]) {
       options.baselineSelector === "previous" ||
       options.baselineSelector === "latest-pass"
     ) {
-      const fallbackPreviousRunId = await resolvePreviousRunId(repoRoot, candidateRunId);
+      const fallbackPreviousRunId = await resolvePreviousRunId(
+        repoRoot,
+        candidateRunId,
+        options.filters,
+      );
       if (fallbackPreviousRunId) {
         throw new Error(
-          `no comparable ${options.baselineSelector} Kova run found for ${candidateRunId}; nearest prior run is ${fallbackPreviousRunId}. Run another comparable candidate or choose an explicit baseline.`,
+          `no comparable ${options.baselineSelector} Kova run found for ${candidateRunId}${hasKovaSelectorFilters(options.filters) ? ` within filters ${formatKovaSelectorFilters(options.filters)}` : ""}; nearest prior run is ${fallbackPreviousRunId}. Run another comparable candidate or choose an explicit baseline.`,
         );
       }
     }
-    throw new Error("not enough Kova runs available to diff. Record at least two runs first.");
+    throw new Error(
+      hasKovaSelectorFilters(options.filters)
+        ? `not enough Kova runs available to diff within filters ${formatKovaSelectorFilters(options.filters)}. Record at least two matching runs first.`
+        : "not enough Kova runs available to diff. Record at least two runs first.",
+    );
   }
 
   const [baseline, candidate] = await Promise.all([
