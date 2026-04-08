@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { parseKovaSelectorFilters } from "../kova/src/commands/selector-filters.ts";
+import {
+  formatKovaSelectorFilters,
+  hasKovaSelectorFilters,
+  parseKovaSelectorFilters,
+} from "../kova/src/commands/selector-filters.ts";
 import { kovaRunArtifactSchema } from "../kova/src/contracts/run-artifact.ts";
 import { renderArtifactSummary, resolveLatestRunId } from "../kova/src/report.ts";
 
@@ -152,5 +156,10 @@ describe("kova report and selector regressions", () => {
       },
       rest: ["latest"],
     });
+  });
+
+  it("treats missing selector filters as empty formatting state", () => {
+    expect(hasKovaSelectorFilters(undefined)).toBe(false);
+    expect(formatKovaSelectorFilters(undefined)).toBe("");
   });
 });

@@ -106,13 +106,19 @@ export function matchesKovaSelectorFilters(
   return true;
 }
 
-export function formatKovaSelectorFilters(filters: KovaRunSelectorFilters) {
+export function formatKovaSelectorFilters(filters?: KovaRunSelectorFilters) {
+  if (!filters) {
+    return "";
+  }
   return Object.entries(filters)
     .filter(([, value]) => Boolean(value))
     .map(([key, value]) => `${key}=${value}`)
     .join(", ");
 }
 
-export function hasKovaSelectorFilters(filters: KovaRunSelectorFilters) {
+export function hasKovaSelectorFilters(filters?: KovaRunSelectorFilters) {
+  if (!filters) {
+    return false;
+  }
   return Object.values(filters).some(Boolean);
 }
