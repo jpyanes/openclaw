@@ -166,7 +166,7 @@ describe("buildStatusMessage", () => {
           updatedAt: 0,
           verboseLevel: "on",
           pluginDebugEntries: [
-            { pluginId: "active-memory", lines: ["🧩 Active Memory: ok 842ms recent 1 mem"] },
+            { pluginId: "active-memory", lines: ["🧩 Active Memory: ok 842ms recent 34 chars"] },
           ],
           pluginStatusLines: ["Legacy Plugin: warmed cache"],
         },
@@ -175,7 +175,7 @@ describe("buildStatusMessage", () => {
       }),
     );
 
-    expect(visible).toContain("Active Memory: ok 842ms recent 1 mem");
+    expect(visible).toContain("Active Memory: ok 842ms recent 34 chars");
     expect(visible).toContain("Legacy Plugin: warmed cache");
   });
 

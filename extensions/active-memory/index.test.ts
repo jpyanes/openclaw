@@ -165,7 +165,8 @@ describe("active-memory plugin", () => {
 
     expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
-      appendSystemContext: expect.stringContaining("<active_memory>"),
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
+      appendSystemContext: expect.stringContaining("<active_memory_plugin>"),
     });
   });
 
@@ -188,7 +189,8 @@ describe("active-memory plugin", () => {
 
     expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
-      appendSystemContext: expect.stringContaining("<active_memory>"),
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
+      appendSystemContext: expect.stringContaining("<active_memory_plugin>"),
     });
     expect((result as { appendSystemContext: string }).appendSystemContext).toContain(
       "lemon pepper wings",
@@ -219,7 +221,8 @@ describe("active-memory plugin", () => {
     );
 
     expect(result).toEqual({
-      appendSystemContext: expect.stringContaining("<active_memory>"),
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
+      appendSystemContext: expect.stringContaining("<active_memory_plugin>"),
     });
     expect((result as { appendSystemContext: string }).appendSystemContext).toContain(
       "2024 trip to tokyo",
@@ -635,6 +638,7 @@ describe("active-memory plugin", () => {
     );
 
     expect(result).toEqual({
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
       appendSystemContext: expect.stringContaining("aisle seat"),
     });
     expect((result as { appendSystemContext: string }).appendSystemContext).toContain(
@@ -642,14 +646,18 @@ describe("active-memory plugin", () => {
     );
   });
 
-  it("applies max-memory truncation after parsing without re-ranking subagent results", async () => {
+  it("applies total summary truncation after normalizing the sidecar reply", async () => {
     api.pluginConfig = {
       agents: ["main"],
-      maxMemories: 1,
+      maxSummaryChars: 40,
     };
     plugin.register(api as unknown as OpenClawPluginApi);
     runEmbeddedPiAgent.mockResolvedValueOnce({
-      payloads: [{ text: "- lemon pepper wings\n- blue cheese" }],
+      payloads: [
+        {
+          text: "- lemon pepper wings with extra crisp skin\n- blue cheese dressing on the side",
+        },
+      ],
     });
 
     const result = await hooks.before_prompt_build(
@@ -663,10 +671,33 @@ describe("active-memory plugin", () => {
     );
 
     expect(result).toEqual({
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
       appendSystemContext: expect.stringContaining("lemon pepper wings"),
     });
     expect((result as { appendSystemContext: string }).appendSystemContext).not.toContain(
-      "blue cheese",
+      "dressing on the side",
+    );
+  });
+
+  it("uses the configured maxSummaryChars value in the sidecar prompt", async () => {
+    api.pluginConfig = {
+      agents: ["main"],
+      maxSummaryChars: 90,
+    };
+    plugin.register(api as unknown as OpenClawPluginApi);
+
+    await hooks.before_prompt_build(
+      { prompt: "what wings should i order? prompt-count-check", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:prompt-count-check",
+        messageProvider: "webchat",
+      },
+    );
+
+    expect(runEmbeddedPiAgent.mock.calls.at(-1)?.[0]?.prompt).toContain(
+      "If something is useful, reply with one compact active-memory summary under 90 characters total.",
     );
   });
 

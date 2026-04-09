@@ -27,8 +27,7 @@
         "type": "string",
         "enum": ["message", "recent", "full"]
       },
-      "maxMemories": { "type": "integer", "minimum": 1, "maximum": 5 },
-      "maxMemoryChars": { "type": "integer", "minimum": 40, "maximum": 500 },
+      "maxSummaryChars": { "type": "integer", "minimum": 40, "maximum": 1000 },
       "recentUserTurns": { "type": "integer", "minimum": 0, "maximum": 4 },
       "recentAssistantTurns": { "type": "integer", "minimum": 0, "maximum": 3 },
       "recentUserChars": { "type": "integer", "minimum": 40, "maximum": 1000 },
@@ -36,8 +35,6 @@
       "logging": { "type": "boolean" },
       "persistTranscripts": { "type": "boolean" },
       "transcriptDir": { "type": "string" },
-      "requireConcreteRelevance": { "type": "boolean" },
-      "dropGenericPreferencesOnNonPreferenceTurns": { "type": "boolean" },
       "cacheTtlMs": { "type": "integer", "minimum": 1000, "maximum": 120000 }
     }
   },
@@ -64,6 +61,10 @@
     "queryMode": {
       "label": "Query Mode",
       "help": "Choose whether the blocking memory subagent sees only the latest user message, a small recent tail, or the full conversation."
+    },
+    "maxSummaryChars": {
+      "label": "Max Summary Characters",
+      "help": "Maximum total characters allowed in the active-memory summary."
     },
     "logging": {
       "label": "Enable Logging",

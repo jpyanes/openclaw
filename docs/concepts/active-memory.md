@@ -37,13 +37,13 @@ self-contained, safe-default setup:
           modelFallbackPolicy: "default-remote",
           queryMode: "recent",
           timeoutMs: 15000,
-          maxMemories: 2,
+          maxSummaryChars: 220,
           persistTranscripts: false,
-          logging: true
-        }
-      }
-    }
-  }
+          logging: true,
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -86,7 +86,7 @@ Start with this in `openclaw.json`:
           modelFallbackPolicy: "default-remote",
           queryMode: "recent",
           timeoutMs: 15000,
-          maxMemories: 2,
+          maxSummaryChars: 220,
           persistTranscripts: false,
           logging: true,
         },
@@ -114,7 +114,7 @@ What this means:
 ## How to see it
 
 Active memory injects hidden system context for the model. It does not expose
-raw `<active_memory>...</active_memory>` tags to the client.
+raw `<active_memory_plugin>...</active_memory_plugin>` tags to the client.
 
 If you want to see what active memory is doing in a live session, turn verbose
 mode on for that session:
@@ -125,8 +125,8 @@ mode on for that session:
 
 With verbose enabled, OpenClaw can show:
 
-- an active memory status line such as `Active Memory: ok 842ms recent 2 mem`
-- a readable debug summary such as `Active Memory Debug: lemon pepper wings; blue cheese`
+- an active memory status line such as `Active Memory: ok 842ms recent 34 chars`
+- a readable debug summary such as `Active Memory Debug: Lemon pepper wings with blue cheese.`
 
 Those lines are derived from the same active memory pass that feeds the hidden
 system context, but they are formatted for humans instead of exposing raw prompt
@@ -147,8 +147,8 @@ Expected visible reply shape:
 ```text
 ...normal assistant reply...
 
-🧩 Active Memory: ok 842ms recent 2 mem
-🔎 Active Memory Debug: lemon pepper wings; blue cheese
+🧩 Active Memory: ok 842ms recent 34 chars
+🔎 Active Memory Debug: Lemon pepper wings with blue cheese.
 ```
 
 ## When it runs
@@ -250,7 +250,7 @@ flowchart LR
   U["User Message"] --> Q["Build Memory Query"]
   Q --> R["Active Memory Blocking Memory Subagent"]
   R -->|NONE or empty| M["Main Reply"]
-  R -->|relevant bullets| I["Append Hidden active_memory System Context"]
+  R -->|relevant summary| I["Append Hidden active_memory_plugin System Context"]
   I --> M["Main Reply"]
 ```
 
@@ -429,23 +429,21 @@ The most important fields are:
 | `config.model`              | `string`                          | Optional blocking memory subagent model ref; when unset, active memory uses the current session model |
 | `config.queryMode`          | `"message" \| "recent" \| "full"` | Controls how much conversation the blocking memory subagent sees                                      |
 | `config.timeoutMs`          | `number`                          | Hard timeout for the blocking memory subagent                                                         |
-| `config.maxMemories`        | `number`                          | Maximum recalled bullets to inject                                                                    |
+| `config.maxSummaryChars`    | `number`                          | Maximum total characters allowed in the active-memory summary                                         |
 | `config.logging`            | `boolean`                         | Emits active memory logs while tuning                                                                 |
 | `config.persistTranscripts` | `boolean`                         | Keeps blocking memory subagent transcripts on disk instead of deleting temp files                     |
 | `config.transcriptDir`      | `string`                          | Relative blocking memory subagent transcript directory under the agent sessions folder                |
 
 Useful tuning fields:
 
-| Key                                                 | Type      | Meaning                                                       |
-| --------------------------------------------------- | --------- | ------------------------------------------------------------- |
-| `config.maxMemoryChars`                             | `number`  | Maximum characters per memory bullet                          |
-| `config.recentUserTurns`                            | `number`  | Prior user turns to include when `queryMode` is `recent`      |
-| `config.recentAssistantTurns`                       | `number`  | Prior assistant turns to include when `queryMode` is `recent` |
-| `config.recentUserChars`                            | `number`  | Max chars per recent user turn                                |
-| `config.recentAssistantChars`                       | `number`  | Max chars per recent assistant turn                           |
-| `config.requireConcreteRelevance`                   | `boolean` | Biases toward `NONE` on weak matches                          |
-| `config.dropGenericPreferencesOnNonPreferenceTurns` | `boolean` | Filters generic preference noise                              |
-| `config.cacheTtlMs`                                 | `number`  | Cache reuse for repeated identical queries                    |
+| Key                           | Type     | Meaning                                                       |
+| ----------------------------- | -------- | ------------------------------------------------------------- |
+| `config.maxSummaryChars`      | `number` | Maximum total characters allowed in the active-memory summary |
+| `config.recentUserTurns`      | `number` | Prior user turns to include when `queryMode` is `recent`      |
+| `config.recentAssistantTurns` | `number` | Prior assistant turns to include when `queryMode` is `recent` |
+| `config.recentUserChars`      | `number` | Max chars per recent user turn                                |
+| `config.recentAssistantChars` | `number` | Max chars per recent assistant turn                           |
+| `config.cacheTtlMs`           | `number` | Cache reuse for repeated identical queries                    |
 
 ## Recommended setup
 
@@ -461,7 +459,7 @@ Start with `recent`.
           agents: ["main"],
           queryMode: "recent",
           timeoutMs: 15000,
-          maxMemories: 2,
+          maxSummaryChars: 220,
           logging: true,
         },
       },
@@ -490,9 +488,7 @@ If active memory is not showing up where you expect:
 
 If memory hits are noisy, tighten:
 
-- `maxMemories`
-- `requireConcreteRelevance`
-- `dropGenericPreferencesOnNonPreferenceTurns`
+- `maxSummaryChars`
 
 If active memory is too slow:
 

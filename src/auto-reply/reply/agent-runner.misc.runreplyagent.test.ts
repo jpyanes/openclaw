@@ -1020,8 +1020,8 @@ describe("runReplyAgent Active Memory inline debug", () => {
           {
             pluginId: "active-memory",
             lines: [
-              "🧩 Active Memory: ok 842ms recent 2 mem",
-              "🔎 Active Memory Debug: lemon pepper wings; blue cheese",
+              "🧩 Active Memory: ok 842ms recent 34 chars",
+              "🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
             ],
           },
         ],
@@ -1096,7 +1096,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
     expect(Array.isArray(result)).toBe(true);
     expect((result as { text?: string }[]).map((payload) => payload.text)).toEqual([
       "Normal reply",
-      "🧩 Active Memory: ok 842ms recent 2 mem\n🔎 Active Memory Debug: lemon pepper wings; blue cheese",
+      "🧩 Active Memory: ok 842ms recent 34 chars\n🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
     ]);
   });
 
