@@ -70,6 +70,7 @@ describe("tsdown config", () => {
         "agents/model-catalog.runtime",
         "agents/models-config.runtime",
         "agents/pi-model-discovery-runtime",
+        "agents/subagent-registry.runtime",
         "index",
         "commands/status.summary.runtime",
         "plugins/provider-discovery.runtime",
