@@ -3123,10 +3123,16 @@ export async function runEmbeddedAttempt(
                 `llm_output hook blocked by ${llmOutputPluginId}: ${llmOutputDecision.reason}`,
               );
             }
-            // Replace the assistant text with the block message and end the
-            // turn normally — NOT an error. Do not set promptError; the user
-            // will see the replacement message as a completed assistant reply.
+            // Scrub the streamed response from the transcript and set a
+            // prompt error so the run loop surfaces the block message to
+            // the user.  We cannot silently replace the in-memory
+            // assistantTexts because the streaming buffer in server-chat
+            // has already delivered the original text to the UI — the
+            // only reliable way to override it is through the error path
+            // which replaces the chat final event with an error event.
             await replaceLlmOutputResponse(llmOutputDecision.reason, "llm_output", message);
+            promptError = new Error(message);
+            promptErrorSource = "hook:llm_output";
             llmOutputRetryRequested = false;
           }
         } else if (llmOutputDecision?.outcome === "ask") {

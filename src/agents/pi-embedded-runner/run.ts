@@ -1393,19 +1393,23 @@ export async function runEmbeddedPiAgent(
           // we let the rest of this turn run normally so the replacement
           // assistant text is delivered as a completed turn (no error).
           if (promptErrorSource === "hook:llm_output" && !aborted) {
-            // Clear the error marker so downstream logic treats this attempt
-            // as a normal completion (replacement text already populated by
-            // the hook handler) rather than an LLM failure to surface.
-            promptError = null;
-            promptErrorSource = null;
             if (attempt.llmOutputRetryRequested) {
+              // Clear the error and re-invoke the LLM. The rejected response
+              // has been scrubbed from the transcript by the hook handler.
+              promptError = null;
+              promptErrorSource = null;
               log.debug(
                 `[hook:llm_output] block requested retry — re-invoking attempt (count=${attempt.llmOutputRetryCount ?? 0})`,
               );
               continue;
             }
-            // Fall through: the prompt loop's normal payload path will assemble
-            // the replacement text from `attempt.assistantTexts`.
+            // Non-retry block: the hook set promptError to the block
+            // message.  Let it fall through to the failover logic below
+            // which will classify it as `surface_error` (not a retryable
+            // provider failure) and throw — surfacing the block message
+            // to the user via the error event path.  The streaming buffer
+            // already delivered the original text, so the error path is
+            // the only reliable way to override what the UI shows.
           }
 
           if (promptError && !aborted && promptErrorSource !== "compaction") {

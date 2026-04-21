@@ -19,9 +19,27 @@ import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/p
 
 const PLUGIN_ID = "hook-echo";
 
-/** Check if prompt contains a trigger (case-insensitive). */
+/** Check if text contains a trigger (case-insensitive). */
 function hasTrigger(text: string | undefined, trigger: string): boolean {
   return !!text && text.toUpperCase().includes(trigger);
+}
+
+/**
+ * Extract the current user message from the assembled prompt string.
+ * The prompt assembles messages chronologically, so the latest user
+ * message is near the end.  We walk backwards to find the last
+ * timestamp line (the current turn) and return everything from there.
+ */
+function extractCurrentUserMessage(prompt: string | undefined): string {
+  if (!prompt) return "";
+  const lines = prompt.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s/.test(lines[i])) {
+      return lines.slice(i).join("\n");
+    }
+  }
+  // No timestamp found — use last 500 chars as fallback
+  return prompt.slice(-500);
 }
 
 export default definePluginEntry({
@@ -44,7 +62,9 @@ export default definePluginEntry({
           `sessionKey=${ctx.sessionKey ?? "none"} runId=${ctx.runId ?? "none"}`,
       );
 
-      if (hasTrigger(event.prompt, "HOOK_BLOCK_RUN")) {
+      const currentUserMsg = extractCurrentUserMessage(event.prompt);
+
+      if (hasTrigger(currentUserMsg, "HOOK_BLOCK_RUN")) {
         log.info(`[${PLUGIN_ID}] before_agent_run → BLOCKING (trigger: HOOK_BLOCK_RUN)`);
         return {
           outcome: "block" as const,
@@ -53,7 +73,7 @@ export default definePluginEntry({
         };
       }
 
-      if (hasTrigger(event.prompt, "HOOK_ASK_RUN")) {
+      if (hasTrigger(currentUserMsg, "HOOK_ASK_RUN")) {
         log.info(`[${PLUGIN_ID}] before_agent_run → ASKING (trigger: HOOK_ASK_RUN)`);
         return {
           outcome: "ask" as const,
@@ -95,10 +115,10 @@ export default definePluginEntry({
           `sessionKey=${ctx.sessionKey ?? "none"} runId=${ctx.runId ?? "none"}`,
       );
 
-      // Check the original prompt for triggers (prompt is on the event since it produced this output)
-      const combined = `${event.prompt ?? ""} ${textPreview}`;
-
-      if (hasTrigger(combined, "HOOK_BLOCK_RETRY")) {
+      // Only check the last user message to avoid matching trigger words
+      // that appear in conversation history (e.g. assistant quoting triggers).
+      const currentUserMsg = extractCurrentUserMessage(event.prompt);
+      if (hasTrigger(currentUserMsg, "HOOK_BLOCK_RETRY")) {
         log.info(`[${PLUGIN_ID}] llm_output → BLOCKING with retry (trigger: HOOK_BLOCK_RETRY)`);
         return {
           outcome: "block" as const,
@@ -111,7 +131,7 @@ export default definePluginEntry({
         };
       }
 
-      if (hasTrigger(combined, "HOOK_BLOCK_OUTPUT")) {
+      if (hasTrigger(currentUserMsg, "HOOK_BLOCK_OUTPUT")) {
         log.info(`[${PLUGIN_ID}] llm_output → BLOCKING (trigger: HOOK_BLOCK_OUTPUT)`);
         return {
           outcome: "block" as const,
@@ -120,7 +140,7 @@ export default definePluginEntry({
         };
       }
 
-      if (hasTrigger(combined, "HOOK_ASK_OUTPUT")) {
+      if (hasTrigger(currentUserMsg, "HOOK_ASK_OUTPUT")) {
         log.info(`[${PLUGIN_ID}] llm_output → ASKING (trigger: HOOK_ASK_OUTPUT)`);
         return {
           outcome: "ask" as const,
@@ -143,7 +163,7 @@ export default definePluginEntry({
       "llm_output",
       async (event, ctx, controller) => {
         const textPreview = (event.assistantTexts ?? []).join(" ").slice(0, 120);
-        const combined = `${event.prompt ?? ""} ${textPreview}`;
+        const currentUserMsg = extractCurrentUserMessage(event.prompt);
 
         log.info(`[${PLUGIN_ID}] async llm_output started`);
 
@@ -154,7 +174,7 @@ export default definePluginEntry({
           return;
         }
 
-        if (hasTrigger(combined, "HOOK_ASYNC_BLOCK")) {
+        if (hasTrigger(currentUserMsg, "HOOK_ASYNC_BLOCK")) {
           log.info(
             `[${PLUGIN_ID}] async llm_output → BLOCKING via intervene (trigger: HOOK_ASYNC_BLOCK)`,
           );
