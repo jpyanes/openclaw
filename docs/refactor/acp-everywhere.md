@@ -174,53 +174,57 @@ flowchart LR
 ### Sequence: what changes on a normal turn
 
 ```mermaid
-%%{init: {'theme':'base','themeCSS':'svg{background:#e0e0e0;} .messageText{fill:#000000 !important;} .messageLine0,.messageLine1{stroke:#000000 !important;} text.actor{fill:#000000 !important;} .loopText,.loopText>tspan{fill:#000000 !important;} rect.actor{fill:#b0b0b0 !important;stroke:#000000 !important;}','themeVariables':{'background':'#e0e0e0','primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
 sequenceDiagram
     participant U as channel
     participant G as gateway RPC
     participant A as runAgentAttempt
     participant P as pi-embedded
     participant C as runCliAgent
-    Note over A: BEFORE -- branch on isCliProvider
-    U->>G: message
-    G->>A: agent turn
-    alt CLI provider
-        A->>C: runCliAgent
-        C-->>A: payloads + events
-    else embedded
-        A->>P: runEmbeddedPiAgent
-        P-->>A: payloads + events
+    rect rgb(224, 224, 224)
+      Note over A: BEFORE -- branch on isCliProvider
+      U->>G: message
+      G->>A: agent turn
+      alt CLI provider
+          A->>C: runCliAgent
+          C-->>A: payloads + events
+      else embedded
+          A->>P: runEmbeddedPiAgent
+          P-->>A: payloads + events
+      end
+      A-->>G: done
+      G-->>U: reply
     end
-    A-->>G: done
-    G-->>U: reply
 ```
 
 ```mermaid
-%%{init: {'theme':'base','themeCSS':'svg{background:#e0e0e0;} .messageText{fill:#000000 !important;} .messageLine0,.messageLine1{stroke:#000000 !important;} text.actor{fill:#000000 !important;} .loopText,.loopText>tspan{fill:#000000 !important;} rect.actor{fill:#b0b0b0 !important;stroke:#000000 !important;}','themeVariables':{'background':'#e0e0e0','primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
 sequenceDiagram
     participant U as channel
     participant G as gateway RPC
     participant SP as spawn module
     participant T as transport
     participant B as backend
-    Note over SP: AFTER -- no branching, one seam
-    U->>G: message
-    G->>SP: agent turn
-    SP->>T: ensureSession(input)
-    T->>B: ensureSession(input)
-    B-->>T: handle
-    T-->>SP: handle
-    SP->>T: runTurn(handle)
-    T->>B: runTurn(handle)
-    loop streaming
-        B-->>T: AcpRuntimeEvent
-        T-->>SP: AcpRuntimeEvent
-        SP-->>G: translated
+    rect rgb(224, 224, 224)
+      Note over SP: AFTER -- no branching, one seam
+      U->>G: message
+      G->>SP: agent turn
+      SP->>T: ensureSession(input)
+      T->>B: ensureSession(input)
+      B-->>T: handle
+      T-->>SP: handle
+      SP->>T: runTurn(handle)
+      T->>B: runTurn(handle)
+      loop streaming
+          B-->>T: AcpRuntimeEvent
+          T-->>SP: AcpRuntimeEvent
+          SP-->>G: translated
+      end
+      B-->>T: done
+      T-->>SP: done
+      SP-->>G: done
+      G-->>U: reply
     end
-    B-->>T: done
-    T-->>SP: done
-    SP-->>G: done
-    G-->>U: reply
 ```
 
 ## Pros
@@ -402,25 +406,27 @@ That is the whole transport: a thin adapter that hands typed objects from one fu
 Inside the `openclaw-pi` server, the pi subscription system produces events on a bounded in-memory queue; `runTurn` yields them as an async iterable of `AcpRuntimeEvent`. Under loopback, that iterable is returned to the caller directly — no `JSON.stringify`, no framing. Under stdio, the same iterable is wrapped by the stdio transport, which serializes and frames.
 
 ```mermaid
-%%{init: {'theme':'base','themeCSS':'svg{background:#e0e0e0;} .messageText{fill:#000000 !important;} .messageLine0,.messageLine1{stroke:#000000 !important;} text.actor{fill:#000000 !important;} .loopText,.loopText>tspan{fill:#000000 !important;} rect.actor{fill:#b0b0b0 !important;stroke:#000000 !important;}','themeVariables':{'background':'#e0e0e0','primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#b0b0b0','secondaryColor':'#a0a0a0','tertiaryColor':'#909090','primaryTextColor':'#000000','secondaryTextColor':'#000000','tertiaryTextColor':'#000000','noteTextColor':'#000000','lineColor':'#000000','actorLineColor':'#000000','signalColor':'#000000','actorBkg':'#b0b0b0','actorTextColor':'#000000','noteBkgColor':'#d0d0d0','stateLabelColor':'#000000','compositeBackground':'#c0c0c0'}}}%%
 sequenceDiagram
     participant SM as spawn module
     participant T as transport
     participant B as openclaw-pi
     participant PI as pi subscription
-    SM->>T: runTurn(input)
-    T->>B: runTurn(input)
-    B->>PI: subscribeEmbeddedPiSession
-    PI-->>B: onAssistantDelta(text)
-    B-->>T: text_delta
-    T-->>SM: text_delta
-    PI-->>B: onToolCall(tc)
-    B-->>T: tool_call
-    T-->>SM: tool_call
-    PI-->>B: onLifecycleEnd
-    B-->>T: done
-    T-->>SM: done
-    Note over T,B: loopback -- direct yield<br/>stdio -- JSON + framed pipe
+    rect rgb(224, 224, 224)
+      SM->>T: runTurn(input)
+      T->>B: runTurn(input)
+      B->>PI: subscribeEmbeddedPiSession
+      PI-->>B: onAssistantDelta(text)
+      B-->>T: text_delta
+      T-->>SM: text_delta
+      PI-->>B: onToolCall(tc)
+      B-->>T: tool_call
+      T-->>SM: tool_call
+      PI-->>B: onLifecycleEnd
+      B-->>T: done
+      T-->>SM: done
+      Note over T,B: loopback -- direct yield<br/>stdio -- JSON + framed pipe
+    end
 ```
 
 ```ts path=null start=null
