@@ -14,6 +14,8 @@ import { createBaseToolHandlerState } from "./pi-tool-handler-state.test-helpers
 const hookMocks = vi.hoisted(() => ({
   runner: {
     hasHooks: vi.fn(() => true),
+    hasAsyncHooks: vi.fn(() => false),
+    fireAsync: vi.fn(() => () => {}),
     runAfterToolCall: vi.fn(async () => {}),
     runBeforeToolCall: vi.fn(async () => {}),
   },

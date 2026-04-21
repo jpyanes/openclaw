@@ -2488,7 +2488,7 @@ export async function runEmbeddedAttempt(
                 log,
               });
               if (approvalResult === "deny" || approvalResult === "cancelled") {
-                log.warn(`before_agent_run hook approval denied`);
+                log.warn(`before_agent_run hook approval ${approvalResult} (plugin=${beforeRunPluginId})${approvalResult === "cancelled" ? " — no approval route available (is control-ui connected?)" : ""}`);
                 promptError = new Error(
                   beforeRunDecision.denialMessage ?? "Request denied by owner.",
                 );
@@ -3104,7 +3104,7 @@ export async function runEmbeddedAttempt(
             (approvalResult === "timeout" &&
               (llmOutputDecision.timeoutBehavior ?? "deny") === "deny");
           if (shouldDeny) {
-            log.warn(`llm_output hook approval denied/timed out, redacting response`);
+            log.warn(`llm_output hook approval ${approvalResult} (plugin=${llmOutputPluginId}), redacting response${approvalResult === "cancelled" ? " — no approval route available" : ""}`);
             await redactLlmOutputResponse(
               llmOutputDecision.reason,
               "llm_output:ask",
