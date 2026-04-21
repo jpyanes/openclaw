@@ -209,6 +209,8 @@ export type PluginHookLlmOutputEvent = {
    * `resolvedRef` so provider/model consumers keep a stable parse contract.
    */
   harnessId?: string;
+  /** The original user prompt that produced this output. */
+  prompt?: string;
   assistantTexts: string[];
   lastAssistant?: unknown;
   usage?: {
