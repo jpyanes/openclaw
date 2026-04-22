@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://openclaw.ai/schemas/extension-manifest.schema.json",
+  "title": "OpenClaw Extension Manifest",
+  "description": "Declarative catalog of OpenClaw extensions that can be discovered during onboarding and installed on demand via `openclaw plugins install`. This file is NOT used at runtime for bundled (in-tree) extensions — those are discovered by scanning subdirectories of `extensions/`. External entries listed here point to npm packages that are NOT shipped in this repo; the onboard flow will offer them to the user and `openclaw plugins install` will materialise them locally.",
+  "type": "object",
+  "required": ["schemaVersion", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Bumped only on backwards-incompatible structural changes."
+    },
+    "description": { "type": "string" },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ExtensionEntry" }
+    }
+  },
+  "definitions": {
+    "ExtensionEntry": {
+      "type": "object",
+      "required": ["name", "source", "kind", "openclaw"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "npm package name, e.g. \"@wecom/wecom-openclaw-plugin\"."
+        },
+        "version": {
+          "type": "string",
+          "description": "Optional latest-known version. Not consumed by install; npm registry still resolves the actual version."
+        },
+        "description": { "type": "string" },
+        "source": {
+          "type": "string",
+          "enum": ["external", "bundled"],
+          "description": "\"external\" — lives outside this repo, installed on demand. \"bundled\" — currently lives in this repo; listed here for forward-compatibility so future releases can flip it to \"external\" without breaking onboard UX."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["channel", "provider", "tool", "hook", "skill"],
+          "description": "Primary capability of the plugin. `channel` and `provider` are the two kinds consumed by onboard in phase 1."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Free-form tags reserved for future manifest-driven search/filter."
+        },
+        "search": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "keywords": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "publisher": {
+          "type": "object",
+          "description": "Reserved. Phase-1 does not consume this, but hosts should preserve unknown fields.",
+          "additionalProperties": true
+        },
+        "signature": {
+          "type": "object",
+          "description": "Reserved for future manifest signing.",
+          "additionalProperties": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Reserved for future capability negotiation."
+        },
+        "openclaw": {
+          "type": "object",
+          "description": "Mirrors the `openclaw.*` block a plugin would carry in its own package.json — kept flat here so onboard can render options without pulling the package first.",
+          "additionalProperties": true,
+          "properties": {
+            "channel": {
+              "type": "object",
+              "description": "Channel metadata (see src/plugins/manifest.ts PluginPackageChannel).",
+              "additionalProperties": true,
+              "required": ["id", "label"],
+              "properties": {
+                "id": { "type": "string" },
+                "label": { "type": "string" },
+                "selectionLabel": { "type": "string" },
+                "detailLabel": { "type": "string" },
+                "docsPath": { "type": "string" },
+                "docsLabel": { "type": "string" },
+                "blurb": { "type": "string" },
+                "order": { "type": "number" },
+                "aliases": { "type": "array", "items": { "type": "string" } },
+                "preferOver": { "type": "array", "items": { "type": "string" } },
+                "systemImage": { "type": "string" },
+                "markdownCapable": { "type": "boolean" },
+                "quickstartAllowFrom": { "type": "boolean" }
+              }
+            },
+            "install": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["npmSpec"],
+              "properties": {
+                "npmSpec": { "type": "string" },
+                "localPath": { "type": "string" },
+                "defaultChoice": { "type": "string", "enum": ["npm", "local"] },
+                "minHostVersion": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

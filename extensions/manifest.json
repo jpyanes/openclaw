@@ -1,0 +1,31 @@
+{
+  "$schema": "./manifest.schema.json",
+  "schemaVersion": 1,
+  "description": "Extension manifest. Declares plugin packages that OpenClaw can discover during onboarding and install on demand via `openclaw plugins install`. Bundled extensions (subdirectories of this folder) are always merged in first; entries listed here add external packages that are NOT shipped in this repo.",
+  "entries": [
+    {
+      "name": "@wecom/wecom-openclaw-plugin",
+      "description": "OpenClaw WeCom (企业微信) channel plugin — community maintained, published on npm.",
+      "source": "external",
+      "kind": "channel",
+      "openclaw": {
+        "channel": {
+          "id": "wecom",
+          "label": "WeCom",
+          "selectionLabel": "WeCom (企业微信)",
+          "detailLabel": "WeCom",
+          "docsPath": "/channels/wecom",
+          "docsLabel": "wecom",
+          "blurb": "企业微信 (WeCom) bot & conversation channel.",
+          "aliases": ["qywx", "wework"],
+          "order": 45
+        },
+        "install": {
+          "npmSpec": "@wecom/wecom-openclaw-plugin",
+          "defaultChoice": "npm",
+          "minHostVersion": ">=2026.4.10"
+        }
+      }
+    }
+  ]
+}

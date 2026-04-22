@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
+import { resolveExtensionManifestSync } from "../plugins/extension-registry/index.js";
 import type { PluginPackageChannel } from "../plugins/manifest.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 
@@ -108,13 +109,51 @@ function toBundledChannelEntry(entry: ChannelCatalogEntryLike): BundledChannelCa
 }
 
 export function listBundledChannelCatalogEntries(): BundledChannelCatalogEntry[] {
-  const bundledEntries = readBundledExtensionCatalogEntriesSync()
-    .map((entry) => toBundledChannelEntry(entry))
-    .filter((entry): entry is BundledChannelCatalogEntry => Boolean(entry));
-  if (bundledEntries.length > 0) {
-    return bundledEntries;
+  const seenIds = new Set<string>();
+  const merged: BundledChannelCatalogEntry[] = [];
+
+  const pushIfNew = (entry: BundledChannelCatalogEntry | null) => {
+    if (!entry || seenIds.has(entry.id)) {
+      return;
+    }
+    seenIds.add(entry.id);
+    merged.push(entry);
+  };
+
+  // Layer 1 — concrete bundled extensions (their own package.json).
+  for (const entry of readBundledExtensionCatalogEntriesSync()) {
+    pushIfNew(toBundledChannelEntry(entry));
   }
-  return readOfficialCatalogFileSync()
-    .map((entry) => toBundledChannelEntry(entry))
-    .filter((entry): entry is BundledChannelCatalogEntry => Boolean(entry));
+
+  // Layer 1 fallback — `dist/channel-catalog.json` (published artifact).
+  if (merged.length === 0) {
+    for (const entry of readOfficialCatalogFileSync()) {
+      pushIfNew(toBundledChannelEntry(entry));
+    }
+  }
+
+  // Layer 2 — external packages declared in `extensions/manifest.json`.
+  // These are NOT shipped in the repo; they install on demand via
+  // `openclaw plugins install <npmSpec>`. They must still show up in onboard
+  // pickers, so surface them here as virtual bundled entries (with their
+  // catalog-style metadata preserved so downstream filtering can detect
+  // "install-needed" state). Duplicate IDs from a locally-checked-out
+  // extension take precedence, which lets devs override a published plugin
+  // with a workspace copy.
+  try {
+    for (const entry of resolveExtensionManifestSync()) {
+      if (entry.kind && entry.kind !== "channel") {
+        continue;
+      }
+      const channel = entry.openclaw?.channel;
+      if (!channel) {
+        continue;
+      }
+      pushIfNew(toBundledChannelEntry({ openclaw: { channel } }));
+    }
+  } catch {
+    // Extension manifest failures must never block onboard.
+  }
+
+  return merged;
 }

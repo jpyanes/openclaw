@@ -3,6 +3,7 @@ import path from "node:path";
 import { MANIFEST_KEY } from "../../compat/legacy-names.js";
 import { resolveOpenClawPackageRootSync } from "../../infra/openclaw-root.js";
 import { listChannelCatalogEntries } from "../../plugins/channel-catalog-registry.js";
+import { resolveExtensionManifestSync } from "../../plugins/extension-registry/index.js";
 import type { OpenClawPackageManifest } from "../../plugins/manifest.js";
 import type { PluginPackageChannel, PluginPackageInstall } from "../../plugins/manifest.js";
 import type { PluginOrigin } from "../../plugins/plugin-origin.types.js";
@@ -55,7 +56,8 @@ const ORIGIN_PRIORITY: Record<PluginOrigin, number> = {
 };
 
 const EXTERNAL_CATALOG_PRIORITY = ORIGIN_PRIORITY.bundled + 1;
-const FALLBACK_CATALOG_PRIORITY = EXTERNAL_CATALOG_PRIORITY + 1;
+const EXTENSION_MANIFEST_PRIORITY = EXTERNAL_CATALOG_PRIORITY + 1;
+const FALLBACK_CATALOG_PRIORITY = EXTENSION_MANIFEST_PRIORITY + 1;
 
 type ExternalCatalogEntry = {
   name?: string;
@@ -167,6 +169,24 @@ function loadOfficialCatalogEntries(options: CatalogOptions): ChannelPluginCatal
   return loadCatalogEntriesFromPaths(resolveOfficialCatalogPaths(options))
     .map((entry) => buildExternalCatalogEntry(entry))
     .filter((entry): entry is ChannelPluginCatalogEntry => Boolean(entry));
+}
+
+function loadExtensionManifestChannelEntries(options: CatalogOptions): ChannelPluginCatalogEntry[] {
+  try {
+    return resolveExtensionManifestSync({ env: options.env ?? process.env })
+      .filter((entry) => (entry.kind ?? "channel") === "channel")
+      .map((entry) =>
+        buildCatalogEntryFromManifest({
+          packageName: entry.name,
+          channel: entry.openclaw?.channel,
+          install: entry.openclaw?.install,
+        }),
+      )
+      .filter((entry): entry is ChannelPluginCatalogEntry => Boolean(entry));
+  } catch {
+    // Extension manifest resolution MUST NEVER break channel discovery.
+    return [];
+  }
 }
 
 function toChannelMeta(params: {
@@ -346,6 +366,21 @@ export function listChannelPluginCatalogEntries(
     const existing = resolved.get(entry.id);
     if (!existing || priority < existing.priority) {
       resolved.set(entry.id, { entry, priority });
+    }
+  }
+
+  // Extension manifest — declarative catalog of npm-published plugins that
+  // ship as part of this repo's `extensions/manifest.json`. Ranked between
+  // EXTERNAL_CATALOG (user-supplied overrides) and FALLBACK_CATALOG (the
+  // published `dist/channel-catalog.json`), so locally-discovered plugins
+  // and user overrides still win, but entries declared by the host repo
+  // beat the baked fallback. See `src/plugins/extension-registry` for the
+  // source composer.
+  for (const manifestEntry of loadExtensionManifestChannelEntries(options)) {
+    const priority = EXTENSION_MANIFEST_PRIORITY;
+    const existing = resolved.get(manifestEntry.id);
+    if (!existing || priority < existing.priority) {
+      resolved.set(manifestEntry.id, { entry: manifestEntry, priority });
     }
   }
 
