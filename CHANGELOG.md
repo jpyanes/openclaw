@@ -6,7 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
-- OpenAI/images: default OpenAI image generation to `gpt-image-2` while keeping `gpt-image-1` available by explicit model selection.
+- OpenAI/images: default the bundled image-generation provider and live media smoke tests to `gpt-image-2`, and advertise the newer 2K/4K OpenAI size hints in image-generation docs and tool metadata.
 
 ### Fixes
 
