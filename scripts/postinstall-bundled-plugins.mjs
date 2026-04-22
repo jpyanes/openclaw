@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import validRange from "semver/ranges/valid.js";
 import { resolveNpmRunner } from "./npm-runner.mjs";
 
 export const BUNDLED_PLUGIN_INSTALL_TARGETS = [];
@@ -403,34 +404,7 @@ function isSafeBundledRuntimeDependencySpec(spec) {
   if (!normalized) {
     return false;
   }
-  const lower = normalized.toLowerCase();
-  if (
-    lower.startsWith("file:") ||
-    lower.startsWith("link:") ||
-    lower.startsWith("workspace:") ||
-    lower.startsWith("git:") ||
-    lower.startsWith("git+") ||
-    lower.startsWith("ssh:") ||
-    lower.startsWith("http:") ||
-    lower.startsWith("https:")
-  ) {
-    return false;
-  }
-  if (
-    normalized.includes("://") ||
-    normalized.startsWith("/") ||
-    normalized.startsWith("\\") ||
-    normalized === "." ||
-    normalized.startsWith("./") ||
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    normalized === "~" ||
-    normalized.startsWith("~/") ||
-    /^[A-Za-z]:[\\/]/u.test(normalized)
-  ) {
-    return false;
-  }
-  return true;
+  return validRange(normalized) !== null;
 }
 
 function assertSafeBundledRuntimeDependencySpec(depName, spec) {

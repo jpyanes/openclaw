@@ -771,6 +771,12 @@ describe("bundled plugin postinstall", () => {
     "./grammy",
     "~/grammy",
     "C:\\tmp\\grammy",
+    ".\\grammy",
+    "..\\grammy",
+    "C:tmp\\grammy",
+    "npm:evilpkg@1.0.0",
+    "github:user/repo",
+    "user/repo",
   ])("rejects unsafe bundled runtime dependency specifier %s before install", async (spec) => {
     const extensionsDir = await createExtensionsDir();
     const packageRoot = path.dirname(path.dirname(extensionsDir));
