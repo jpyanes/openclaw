@@ -397,6 +397,24 @@ export default definePluginEntry({
           `blockSKs=[${[...blockToolOutputSessionKeys].join(",")}] askSKs=[${[...askToolOutputSessionKeys].join(",")}]`,
       );
 
+      // Block empty user messages from retry attempts (prompt("") ghost boxes)
+      if (msg?.role === "user") {
+        const content = msg.content;
+        const isEmpty =
+          !content ||
+          (Array.isArray(content) &&
+            (content as Array<Record<string, unknown>>).every(
+              (c) => !c?.text || (typeof c.text === "string" && c.text.trim() === ""),
+            )) ||
+          (typeof content === "string" && content.trim() === "");
+        if (isEmpty) {
+          log.info(
+            `[${PLUGIN_ID}] before_message_write → BLOCKING empty user message (retry ghost)`,
+          );
+          return { block: true };
+        }
+      }
+
       // Only act on toolResult messages
       const isToolResult =
         msg?.role === "toolResult" ||
