@@ -1360,20 +1360,6 @@ function renderGroupedMessage(
 
   return html`
     <div class="${bubbleClasses}">
-      ${isBlockedUserMessage
-        ? html`<div
-            class="chat-blocked-banner"
-            style="
-            display: flex; align-items: center; gap: 6px;
-            padding: 4px 8px; margin-bottom: 6px;
-            border-radius: 6px;
-            background: rgba(255, 165, 0, 0.12);
-            color: #b8860b; font-size: 0.8em; font-weight: 500;
-          "
-          >
-            🛡️ Hidden from agents — only you can see this
-          </div>`
-        : nothing}
       ${renderReplyPill(normalizedMessage.replyTarget)}
       ${hasActions
         ? html`<div class="chat-bubble-actions">
@@ -1510,6 +1496,19 @@ function renderGroupedMessage(
                 })
               : nothing}
           `}
+      ${isBlockedUserMessage
+        ? html`<div
+            style="
+            text-align: right;
+            margin-top: 4px;
+            font-size: 0.7em;
+            opacity: 0.45;
+            font-style: italic;
+          "
+          >
+            hidden from agents
+          </div>`
+        : nothing}
     </div>
   `;
 }

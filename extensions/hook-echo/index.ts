@@ -390,8 +390,12 @@ export default definePluginEntry({
     // HOOK_ASK_TOOL_OUTPUT triggers, we either block persistence entirely
     // or substitute the content with a policy notice.
     api.on("before_message_write", (event) => {
-      const msg = event.message;
+      const msg = event.message as Record<string, unknown> | undefined;
       const sk = event.sessionKey;
+      log.info(
+        `[${PLUGIN_ID}] before_message_write fired — role=${String(msg?.role)} sk=${sk ?? "?"} ` +
+          `blockSKs=[${[...blockToolOutputSessionKeys].join(",")}] askSKs=[${[...askToolOutputSessionKeys].join(",")}]`,
+      );
 
       // Only act on toolResult messages
       const isToolResult =
