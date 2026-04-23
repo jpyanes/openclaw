@@ -109,7 +109,7 @@ export type HookDecisionAsk = {
  * deprecated `userMessage` field as a fallback before defaulting.
  */
 export function resolveBlockMessage(decision: HookDecisionBlock): string {
-  return decision.message ?? decision.userMessage ?? DEFAULT_BLOCK_MESSAGE;
+  return decision.message ?? decision.userMessage ?? decision.reason ?? DEFAULT_BLOCK_MESSAGE;
 }
 
 // ---------------------------------------------------------------------------

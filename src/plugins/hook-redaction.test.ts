@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { redactMessages } from "./hook-redaction.js";
+import { redactMessages, redactDuplicateUserMessage } from "./hook-redaction.js";
 
 describe("redactMessages", () => {
   let tempDir: string;
@@ -225,5 +225,188 @@ describe("redactMessages", () => {
       expect(remaining).toHaveLength(2);
       expect(remaining.map((m) => m.content)).toEqual(["b", "c"]);
     });
+  });
+
+  // Regression suite: real session-file shape used by the embedded runner.
+  // Entries are wrapped as { type: "message", message: { role, content: [{type:"text",text}] } }.
+  // Before the fix, the `match` filter only inspected top-level role/content,
+  // never matched these entries, and `redactMessages` returned 0 — leaving
+  // hook-blocked LLM output on disk and visible after the SPA reloaded
+  // history.
+  describe("real session-file shape (regression)", () => {
+    function runnerMessage(role: "user" | "assistant" | "tool", text: string) {
+      return {
+        type: "message",
+        id: `id-${role}-${text.slice(0, 8)}`,
+        timestamp: new Date().toISOString(),
+        message: {
+          role,
+          content: [{ type: "text", text }],
+          timestamp: Date.now(),
+        },
+      };
+    }
+
+    it("matches role on the nested message field", async () => {
+      await writeTranscript([
+        runnerMessage("user", "hello"),
+        runnerMessage("assistant", "platypus answer"),
+        runnerMessage("user", "thanks"),
+      ]);
+
+      const removed = await redactMessages(sessionFile(), { match: { role: "assistant" } }, audit);
+
+      expect(removed).toBe(1);
+      const remaining = await readTranscript();
+      expect(remaining).toHaveLength(2);
+      const roles = remaining.map((m) => (m.message as { role: string }).role);
+      expect(roles).toEqual(["user", "user"]);
+    });
+
+    it("matches contentSubstring against nested message.content[*].text", async () => {
+      await writeTranscript([
+        runnerMessage("assistant", "safe response"),
+        runnerMessage("assistant", "Platypuses glow under UV light. Bad content here."),
+        runnerMessage("assistant", "another safe one"),
+      ]);
+
+      const removed = await redactMessages(
+        sessionFile(),
+        { match: { role: "assistant", contentSubstring: "Platypuses glow" } },
+        audit,
+      );
+
+      expect(removed).toBe(1);
+      const remaining = await readTranscript();
+      expect(remaining).toHaveLength(2);
+      const texts = remaining.map(
+        (m) => (m.message as { content: Array<{ text: string }> }).content[0]?.text,
+      );
+      expect(texts).toEqual(["safe response", "another safe one"]);
+    });
+
+    it("removes the streamed assistant response that the llm_output block hook scrubs", async () => {
+      // Mirrors the exact call shape from
+      // src/agents/pi-embedded-runner/run/attempt.ts replaceLlmOutputResponse:
+      //   match: { role: "assistant", contentSubstring: assistantTexts[0].slice(0,100) }
+      const streamed =
+        "Here's a fun fact: **Platypuses glow under UV light!** When exposed to ultraviolet light, their fur fluoresces a blue-green color.";
+      await writeTranscript([
+        runnerMessage("user", "HOOK_BLOCK_OUTPUT please tell me a quick fun fact about platypuses"),
+        runnerMessage("assistant", streamed),
+      ]);
+
+      const removed = await redactMessages(
+        sessionFile(),
+        { match: { role: "assistant", contentSubstring: streamed.slice(0, 100) } },
+        audit,
+      );
+
+      expect(removed).toBe(1);
+      const remaining = await readTranscript();
+      expect(remaining).toHaveLength(1);
+      expect((remaining[0].message as { role: string }).role).toBe("user");
+    });
+
+    it("still matches the legacy flat shape used by the existing tests", async () => {
+      // Backwards-compat: flat { role, content: <string> } entries must still
+      // match so older tests and any externally-produced transcripts keep
+      // working.
+      await writeTranscript([
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "bad stuff" },
+      ]);
+
+      const removed = await redactMessages(
+        sessionFile(),
+        { match: { role: "assistant", contentSubstring: "bad stuff" } },
+        audit,
+      );
+
+      expect(removed).toBe(1);
+      const remaining = await readTranscript();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].role).toBe("user");
+    });
+
+    it("ignores entries that have neither top-level nor nested role", async () => {
+      await writeTranscript([
+        { type: "session" },
+        { type: "model_change" },
+        runnerMessage("assistant", "should be removed"),
+      ]);
+
+      const removed = await redactMessages(sessionFile(), { match: { role: "assistant" } }, audit);
+
+      expect(removed).toBe(1);
+      const remaining = await readTranscript();
+      expect(remaining).toHaveLength(2);
+    });
+  });
+});
+
+describe("redactDuplicateUserMessage", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "openclaw-redact-dupe-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  function sessionFile() {
+    return join(tempDir, "transcript.jsonl");
+  }
+
+  async function writeTranscript(messages: Array<Record<string, unknown>>) {
+    const content = messages.map((m) => JSON.stringify(m)).join("\n") + "\n";
+    await writeFile(sessionFile(), content, "utf-8");
+  }
+
+  async function readTranscript(): Promise<Array<Record<string, unknown>>> {
+    const content = await readFile(sessionFile(), "utf-8");
+    return content
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  function runnerMessage(role: "user" | "assistant" | "tool", text: string) {
+    return {
+      type: "message",
+      message: {
+        role,
+        content: [{ type: "text", text }],
+      },
+    };
+  }
+
+  it("removes only the latest duplicate user prompt", async () => {
+    await writeTranscript([
+      runnerMessage("user", "HOOK_BLOCK_RETRY tell me a fun fact"),
+      runnerMessage("assistant", "blocked response"),
+      runnerMessage("user", "HOOK_BLOCK_RETRY tell me a fun fact"),
+      runnerMessage("assistant", "second blocked response"),
+    ]);
+
+    const removed = await redactDuplicateUserMessage(
+      sessionFile(),
+      "HOOK_BLOCK_RETRY tell me a fun fact",
+    );
+
+    expect(removed).toBe(1);
+    const remaining = await readTranscript();
+    const userTexts = remaining
+      .filter((entry) => (entry.message as Record<string, unknown>)?.role === "user")
+      .map(
+        (entry) =>
+          ((((entry.message as Record<string, unknown>)?.content as
+            | Array<Record<string, unknown>>
+            | undefined) ?? [])[0]?.text as string) ?? "",
+      );
+    expect(userTexts).toEqual(["HOOK_BLOCK_RETRY tell me a fun fact"]);
+    expect(remaining).toHaveLength(3);
   });
 });

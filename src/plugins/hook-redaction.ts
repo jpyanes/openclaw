@@ -12,16 +12,9 @@ import { readFile, writeFile, rename, appendFile, mkdir } from "node:fs/promises
 import { join, dirname } from "node:path";
 import type { RedactionAuditEntry } from "./hook-decision-types.js";
 
-// ---------------------------------------------------------------------------
-// Message filter for identifying messages to redact
-// ---------------------------------------------------------------------------
-
 export type RedactMessageFilter = {
-  /** Remove messages by their index in the transcript. */
   indices?: number[];
-  /** Remove messages by run ID. */
   runId?: string;
-  /** Remove messages by role + content match. */
   match?: {
     role: "user" | "assistant" | "tool";
     contentSubstring?: string;
@@ -36,23 +29,34 @@ export type RedactMessageAuditInput = {
   timestamp: number;
 };
 
-// ---------------------------------------------------------------------------
-// Core redaction function
-// ---------------------------------------------------------------------------
+function extractMessageText(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj["content"] === "string") {
+    return obj["content"];
+  }
+  if (Array.isArray(obj["content"])) {
+    return obj["content"]
+      .map((block) => {
+        if (
+          block &&
+          typeof block === "object" &&
+          typeof (block as Record<string, unknown>)["text"] === "string"
+        ) {
+          return (block as Record<string, unknown>)["text"] as string;
+        }
+        return "";
+      })
+      .join("");
+  }
+  if (typeof obj["text"] === "string") {
+    return obj["text"];
+  }
+  return "";
+}
 
-/**
- * Hard-delete messages from a session transcript JSONL file.
- * Rewrites the JSONL file with the target message(s) removed.
- *
- * Strategy:
- * 1. Read the full transcript file into memory
- * 2. Filter out the target messages
- * 3. Write the filtered content to a temp file in the same directory
- * 4. Atomic rename to replace the original
- * 5. Append the audit entry to `<session-dir>/redaction-log.jsonl`
- *
- * @returns Number of messages removed.
- */
 export async function redactMessages(
   sessionFile: string,
   filter: RedactMessageFilter,
@@ -63,15 +67,12 @@ export async function redactMessages(
     rawContent = await readFile(sessionFile, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      // File not found (session archived or already gone). No-op.
       return 0;
     }
     throw err;
   }
 
   const lines = rawContent.split("\n").filter((line) => line.trim().length > 0);
-
-  // Parse each line as JSON, keeping the raw line paired with parsed content
   const entries: Array<{ raw: string; parsed: Record<string, unknown>; index: number }> = [];
   for (let i = 0; i < lines.length; i++) {
     try {
@@ -81,12 +82,10 @@ export async function redactMessages(
         index: i,
       });
     } catch {
-      // Keep unparseable lines as-is (don't lose data)
       entries.push({ raw: lines[i], parsed: {}, index: i });
     }
   }
 
-  // Build the set of indices to remove
   const indicesToRemove = new Set<number>();
 
   if (filter.indices) {
@@ -107,12 +106,22 @@ export async function redactMessages(
 
   if (filter.match) {
     for (const entry of entries) {
-      if (entry.parsed.role !== filter.match.role) {
+      const nestedMessage =
+        entry.parsed["message"] && typeof entry.parsed["message"] === "object"
+          ? (entry.parsed["message"] as Record<string, unknown>)
+          : undefined;
+      const role =
+        typeof nestedMessage?.["role"] === "string"
+          ? nestedMessage["role"]
+          : typeof entry.parsed.role === "string"
+            ? entry.parsed.role
+            : undefined;
+      if (role !== filter.match.role) {
         continue;
       }
       if (filter.match.contentSubstring) {
-        const content = typeof entry.parsed.content === "string" ? entry.parsed.content : "";
-        if (!content.includes(filter.match.contentSubstring)) {
+        const text = extractMessageText(nestedMessage ?? entry.parsed);
+        if (!text.includes(filter.match.contentSubstring)) {
           continue;
         }
       }
@@ -121,10 +130,9 @@ export async function redactMessages(
   }
 
   if (indicesToRemove.size === 0) {
-    return 0; // Nothing to redact — idempotent
+    return 0;
   }
 
-  // Collect content hashes of removed messages for audit
   const removedContentParts: string[] = [];
   for (const idx of indicesToRemove) {
     const entry = entries[idx];
@@ -134,16 +142,13 @@ export async function redactMessages(
   }
   const contentHash = createHash("sha256").update(removedContentParts.join("\n")).digest("hex");
 
-  // Filter out removed entries
   const keptLines = entries
     .filter((entry) => !indicesToRemove.has(entry.index))
     .map((entry) => entry.raw);
 
-  // Atomic rewrite: write to temp file, then rename
   const tempFile = `${sessionFile}.redact-tmp-${Date.now()}`;
   const newContent = keptLines.length > 0 ? keptLines.join("\n") + "\n" : "";
 
-  // Retry with backoff (3 attempts)
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -153,13 +158,12 @@ export async function redactMessages(
       break;
     } catch (err) {
       lastError = err;
-      const delay = 100 * Math.pow(2, attempt); // 100ms, 200ms, 400ms
+      const delay = 100 * Math.pow(2, attempt);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
   if (lastError) {
-    // Don't corrupt the original file — leave temp in place
     throw new Error(
       `redactMessages: failed to atomically rewrite ${sessionFile} after 3 attempts`,
       {
@@ -168,7 +172,6 @@ export async function redactMessages(
     );
   }
 
-  // Write audit entry (best-effort — redaction still succeeds if audit fails)
   try {
     const auditEntry: RedactionAuditEntry = {
       ts: audit.timestamp,
@@ -188,4 +191,71 @@ export async function redactMessages(
   }
 
   return indicesToRemove.size;
+}
+
+export async function redactDuplicateUserMessage(
+  sessionFile: string,
+  promptText: string,
+): Promise<number> {
+  let rawContent: string;
+  try {
+    rawContent = await readFile(sessionFile, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw err;
+  }
+
+  const lines = rawContent.split("\n").filter((line) => line.trim().length > 0);
+  const entries: Array<{ raw: string; parsed: Record<string, unknown>; index: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      entries.push({
+        raw: lines[i],
+        parsed: JSON.parse(lines[i]) as Record<string, unknown>,
+        index: i,
+      });
+    } catch {
+      entries.push({ raw: lines[i], parsed: {}, index: i });
+    }
+  }
+
+  const matchingUserIndices: number[] = [];
+  for (const entry of entries) {
+    const nestedMessage =
+      entry.parsed["message"] && typeof entry.parsed["message"] === "object"
+        ? (entry.parsed["message"] as Record<string, unknown>)
+        : undefined;
+    const role =
+      typeof nestedMessage?.["role"] === "string"
+        ? nestedMessage["role"]
+        : typeof entry.parsed.role === "string"
+          ? entry.parsed.role
+          : undefined;
+    if (role !== "user") {
+      continue;
+    }
+    const text = extractMessageText(nestedMessage ?? entry.parsed);
+    if (text === promptText) {
+      matchingUserIndices.push(entry.index);
+    }
+  }
+
+  if (matchingUserIndices.length < 2) {
+    return 0;
+  }
+
+  const latestDuplicateIndex = matchingUserIndices[matchingUserIndices.length - 1];
+  return redactMessages(
+    sessionFile,
+    { indices: [latestDuplicateIndex] },
+    {
+      reason: "Removed duplicate user prompt created by llm_output retry",
+      hookPoint: "llm_output:retry:user_dedupe",
+      pluginId: "core",
+      timestamp: Date.now(),
+      category: "retry_dedupe",
+    },
+  );
 }

@@ -38,12 +38,18 @@ export function guardSessionManager(
   }
 
   const hookRunner = getGlobalHookRunner();
-  const beforeMessageWrite = hookRunner?.hasHooks("before_message_write")
+  // Always wire beforeMessageWrite so plugins that register
+  // before_message_write hooks after guard installation still fire.
+  // runBeforeMessageWrite no-ops internally when no hooks are registered.
+  const beforeMessageWrite = hookRunner
     ? (event: { message: import("@mariozechner/pi-agent-core").AgentMessage }) => {
-        return hookRunner.runBeforeMessageWrite(event, {
-          agentId: opts?.agentId,
-          sessionKey: opts?.sessionKey,
-        });
+        return hookRunner.runBeforeMessageWrite(
+          { ...event, sessionKey: opts?.sessionKey, agentId: opts?.agentId },
+          {
+            agentId: opts?.agentId,
+            sessionKey: opts?.sessionKey,
+          },
+        );
       }
     : undefined;
 

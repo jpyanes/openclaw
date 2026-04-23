@@ -1130,17 +1130,14 @@ export async function handleToolExecutionEnd(
     `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
   );
 
-  await emitToolResultOutput({
-    ctx,
-    toolName,
-    rawToolName,
-    meta,
-    isToolError,
-    result,
-    sanitizedResult,
-  });
+  let emittedResult = result;
+  let emittedSanitizedResult = sanitizedResult;
+  let emittedIsToolError = isToolError;
+  let skipToolOutputEmission = false;
 
   // Run after_tool_call plugin hooks (sync gate + async)
+  // IMPORTANT: this must run before emitToolResultOutput so hook decisions can
+  // suppress or substitute the tool result before any user/model-visible output.
   const hookRunnerAfter = ctx.hookRunner ?? (await loadHookRunnerGlobal()).getGlobalHookRunner();
   const hasSyncHooks = hookRunnerAfter?.hasHooks("after_tool_call");
   const hasAsyncHooks = hookRunnerAfter?.hasAsyncHooks("after_tool_call");
@@ -1173,20 +1170,169 @@ export async function handleToolExecutionEnd(
         runId,
         toolCallId,
       });
-      if (afterToolDecision?.outcome === "block") {
-        const { resolveBlockMessage } = await import("../plugins/hook-decision-types.js");
-        const blockMessage = resolveBlockMessage(afterToolDecision);
+      if (afterToolDecision?.outcome === "requireApproval") {
+        const reqApproval = afterToolDecision as {
+          outcome: "requireApproval";
+          reason?: string;
+          message?: string;
+          userMessage?: string;
+          denialMessage?: string;
+          timeoutBehavior?: "approve" | "deny";
+          pluginId?: string;
+          title?: string;
+          description?: string;
+          severity?: "info" | "warning" | "danger";
+          timeoutMs?: number;
+        };
+        const promptText =
+          reqApproval.message ??
+          reqApproval.userMessage ??
+          reqApproval.reason ??
+          `Approval required for tool '${toolName}' output before flowing back to the LLM.`;
+        ctx.log.warn(`after_tool_call hook requested approval tool=${toolName}: ${promptText}`);
+        const { requestHookApproval } = await import("../plugins/hook-approval.js");
+        let approvalResult: "allow-once" | "deny" | "timeout" | "cancelled" = "cancelled";
+        try {
+          approvalResult = await requestHookApproval({
+            hookPoint: "after_tool_call",
+            decision: {
+              outcome: "requireApproval",
+              title: reqApproval.title ?? `Approve tool output for '${toolName}'?`,
+              description: reqApproval.description ?? promptText,
+              severity: reqApproval.severity ?? "warning",
+              timeoutMs: reqApproval.timeoutMs ?? 60_000,
+              timeoutBehavior: reqApproval.timeoutBehavior ?? "deny",
+            },
+            pluginId: reqApproval.pluginId ?? "after_tool_call",
+            runId,
+            sessionKey: ctx.params.sessionKey,
+            agentId: ctx.params.agentId ?? "main",
+            log: ctx.log,
+          });
+        } catch (err) {
+          ctx.log.warn(
+            `after_tool_call approval request failed: ${(err as Error)?.message ?? String(err)}`,
+          );
+        }
+        if (approvalResult === "allow-once") {
+          // Approved: emit the real tool result below.
+        } else if (isExecToolName(toolName)) {
+          const { buildExecApprovalPendingToolResult } =
+            await import("./bash-tools.exec-host-shared.js");
+          const warningText = promptText;
+          const syntheticPending = buildExecApprovalPendingToolResult({
+            host: "gateway",
+            command: meta ?? toolName,
+            cwd: undefined,
+            warningText,
+            approvalId: `${toolCallId}:hook-tool-output`,
+            approvalSlug: `${toolCallId.slice(0, 8)}-hook-tool-output`,
+            expiresAtMs: Date.now() + (reqApproval.timeoutMs ?? 60_000),
+            initiatingSurface: {
+              channel: "webchat",
+              channelLabel: "Web UI",
+              accountId: ctx.params.agentId ?? "main",
+            },
+            sentApproverDms: false,
+            unavailableReason: null,
+            allowedDecisions: ["approve", "deny"],
+          });
+          emittedResult = syntheticPending;
+          emittedSanitizedResult = sanitizeToolResult(syntheticPending);
+          emittedIsToolError = false;
+        } else {
+          const denyText =
+            reqApproval.denialMessage ??
+            `🔒 [hook-echo] Tool result for '${toolName}' was not approved (${approvalResult}).`;
+          skipToolOutputEmission = true;
+          const onAfterBlock = ctx.params.onAfterToolCallBlock;
+          if (onAfterBlock) {
+            try {
+              await onAfterBlock({
+                toolName,
+                toolCallId,
+                replacementMessage: denyText,
+                reason: denyText,
+                pluginId: reqApproval.pluginId ?? "after_tool_call",
+              });
+            } catch (err) {
+              ctx.log.warn(
+                `after_tool_call ask-deny: onAfterToolCallBlock callback threw: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+          }
+        }
+      } else if (afterToolDecision?.outcome === "block") {
+        const decisionRecord = afterToolDecision as {
+          reason?: string;
+          message?: string;
+          userMessage?: string;
+        };
+        ctx.log.warn(
+          `after_tool_call block decision keys: ${JSON.stringify(Object.keys(afterToolDecision))} ` +
+            `message=${JSON.stringify(decisionRecord.message)} ` +
+            `userMessage=${JSON.stringify(decisionRecord.userMessage)} ` +
+            `reason=${JSON.stringify(decisionRecord.reason)}`,
+        );
+        const rawBlockMessage =
+          decisionRecord.message ??
+          decisionRecord.userMessage ??
+          decisionRecord.reason ??
+          "This response was blocked by policy";
+        const blockMessage = /agent failed before reply/i.test(rawBlockMessage)
+          ? rawBlockMessage
+          : `⚠️ Agent failed before reply: ${rawBlockMessage.replace(/\.\s*$/, "")}.\nLogs: openclaw logs --follow`;
         ctx.log.warn(
           `after_tool_call hook blocked tool=${toolName}: ${afterToolDecision.reason}` +
             ` (replacement message=${JSON.stringify(blockMessage)})`,
         );
-        // The tool result was already emitted above via emitToolResultOutput.
-        // We can't un-emit it, but we log the block decision and the
-        // user-facing replacement message that should be surfaced when the
-        // sessionFile-aware replacement path is wired.
-        // TODO: wire transcript replacement once sessionFile is available on
-        // ToolHandlerContext.
+        skipToolOutputEmission = true;
+        // Hand the decision to the runner via
+        // `onAfterToolCallBlock` so it can:
+        // `onAfterToolCallBlock` so it can:
+        //   - persist the user-facing block message,
+        //   - emit a terminal lifecycle event (so the chat stream closes
+        //     cleanly even after we abort prompt()),
+        //   - abort the upstream activeSession.prompt() call so the model
+        //     does not consume the just-emitted tool result and does not
+        //     iterate further in this turn.
+        const onAfterBlock = ctx.params.onAfterToolCallBlock;
+        if (onAfterBlock) {
+          // Find the plugin id that produced the block (best-effort: the
+          // hook-runner already attaches `pluginId` to the decision).
+          const pluginId =
+            (afterToolDecision as { pluginId?: string }).pluginId ?? "after_tool_call";
+          try {
+            await onAfterBlock({
+              toolName,
+              toolCallId,
+              replacementMessage: blockMessage,
+              reason: afterToolDecision.reason ?? "after_tool_call hook blocked",
+              pluginId,
+            });
+          } catch (err) {
+            ctx.log.warn(
+              `after_tool_call block: onAfterToolCallBlock callback threw: ${
+                (err as Error)?.message ?? String(err)
+              }`,
+            );
+          }
+        }
       }
+    }
+
+    if (!skipToolOutputEmission) {
+      await emitToolResultOutput({
+        ctx,
+        toolName,
+        rawToolName,
+        meta,
+        isToolError: emittedIsToolError,
+        result: emittedResult,
+        sanitizedResult: emittedSanitizedResult,
+      });
     }
 
     // Fire async after_tool_call handlers (non-blocking)

@@ -104,6 +104,15 @@ export type EmbeddedPiSubscribeState = {
     emit: () => void;
     emitError: (error: string) => void;
   };
+
+  /**
+   * Set to true after the first inline `llm_output` hook fire in this turn.
+   * Inline hook fires only on the first assistant message that contains
+   * user-facing text (not thinking blocks). Subsequent assistant messages
+   * in the same turn are not re-checked. The runner uses this to make the
+   * post-`prompt()` `llm_output` invocation a no-op when inline already ran.
+   */
+  inlineLlmOutputFired?: boolean;
 };
 
 export type EmbeddedPiSubscribeContext = {
@@ -170,6 +179,7 @@ export type ToolHandlerParams = Pick<
   | "sessionId"
   | "agentId"
   | "toolResultFormat"
+  | "onAfterToolCallBlock"
 >;
 
 export type ToolHandlerState = Pick<

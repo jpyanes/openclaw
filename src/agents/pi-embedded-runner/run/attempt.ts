@@ -9,6 +9,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { emitDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
   createDiagnosticTraceContext,
@@ -1997,12 +1998,215 @@ export async function runEmbeddedAttempt(
         });
       };
 
+      // Captures the inline `llm_output` block decision when it fires from
+      // the stream subscriber. Post-prompt(), attempt.ts inspects this to
+      // skip the duplicate hook fire and to skip the legacy redaction (the
+      // inline path already replaced the visible bubble and persisted the
+      // block message). When set, we also abort the upstream prompt() call
+      // so the model doesn't iterate further in this turn.
+      let inlineLlmOutputBlock:
+        | {
+            replacementMessage: string;
+            reason: string;
+            pluginId: string;
+            blockedAssistantText: string;
+          }
+        | undefined;
+
+      // Captures an `after_tool_call` block decision when it lands. Tools
+      // that already executed cannot be un-executed, but we mark the run
+      // as blocked so the post-prompt() flow surfaces the block message,
+      // emits a terminal lifecycle event, and skips the legacy hook-block
+      // orchestration.
+      let afterToolCallBlock:
+        | {
+            toolName: string;
+            toolCallId: string;
+            replacementMessage: string;
+            reason: string;
+            pluginId: string;
+          }
+        | undefined;
+
       const subscription = subscribeEmbeddedPiSession(
         buildEmbeddedSubscriptionParams({
           session: activeSession,
           runId: params.runId,
           initialReplayState: params.initialReplayState,
           hookRunner: getGlobalHookRunner() ?? undefined,
+          inlineLlmOutputContext: {
+            agentId: sessionAgentId,
+            sessionKey: params.sessionKey,
+            workspaceDir: params.workspaceDir,
+            trigger: params.trigger,
+            channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+            provider: params.provider,
+            modelId: params.modelId,
+            userPromptText: params.prompt,
+          },
+          onInlineLlmOutputBlock: async (info) => {
+            inlineLlmOutputBlock = info;
+            // Scrub the prior streamed assistant message from the JSONL so
+            // the SPA's `chat.history` reload after `final` does NOT
+            // resurrect the original streamed text. Without this, the
+            // transcript on disk contains BOTH the original streamed text
+            // AND the replacement, and the SPA renders both — making the
+            // block look like it failed.
+            if (info.blockedAssistantText && info.blockedAssistantText.trim().length > 0) {
+              try {
+                const { redactMessages } = await import("../../../plugins/hook-redaction.js");
+                await redactMessages(
+                  params.sessionFile,
+                  {
+                    match: {
+                      role: "assistant",
+                      contentSubstring: info.blockedAssistantText.slice(0, 100),
+                    },
+                  },
+                  {
+                    reason: info.reason,
+                    hookPoint: "llm_output:inline",
+                    pluginId: info.pluginId,
+                    timestamp: Date.now(),
+                  },
+                );
+              } catch (err) {
+                log.warn(
+                  `inline llm_output block: failed to scrub prior streamed text from transcript: ${
+                    (err as Error)?.message ?? String(err)
+                  }`,
+                );
+              }
+            }
+            // Persist the replacement assistant message so the SPA's
+            // `chat.history` reload after `final` shows the policy notice
+            // in the transcript instead of the streamed text.
+            try {
+              const { appendAssistantMessageToSessionTranscript } =
+                await import("../../../config/sessions/transcript.js");
+              await appendAssistantMessageToSessionTranscript({
+                agentId: sessionAgentId,
+                sessionKey: params.sessionKey,
+                text: info.replacementMessage,
+                idempotencyKey: `hook-block:llm_output:inline:${params.runId}`,
+                updateMode: "inline",
+              });
+            } catch (err) {
+              log.warn(
+                `inline llm_output block: failed to persist replacement message to transcript: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+            // Force-emit a terminal lifecycle event for the chat stream.
+            // `activeSession.abort()` causes the SDK to skip its own
+            // `agent_end` event, which means the subscriber's
+            // `handleAgentEnd` (and therefore `resolveTerminalLifecycle`)
+            // never runs. Without this emission, server-chat never sees a
+            // terminal frame and SPA / WS clients hang until timeout.
+            try {
+              emitAgentEvent({
+                runId: params.runId,
+                stream: "lifecycle",
+                data: {
+                  phase: "error",
+                  error: info.replacementMessage,
+                  errorKind: "hook_block",
+                  hookOverride: true,
+                  livenessState: "blocked",
+                  endedAt: Date.now(),
+                },
+              });
+            } catch (err) {
+              log.warn(
+                `inline llm_output block: failed to emit terminal lifecycle event: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+            // Abort the upstream prompt() call so the model does not
+            // emit further text or call further tools in this turn. The
+            // tools that already ran stay on disk (truthful history) —
+            // only future iterations are blocked.
+            try {
+              void activeSession.abort();
+            } catch (err) {
+              log.warn(
+                `inline llm_output block: activeSession.abort() failed: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+          },
+          onAfterToolCallBlock: async (info) => {
+            // Style the replacement message consistently with BLOCK_RUN /
+            // BLOCK_OUTPUT so the SPA renders it as a clear "Agent failed"
+            // banner instead of a generic line. Avoid double-prefixing if
+            // the plugin already produced the styled wording.
+            const stylizedReplacement = info.replacementMessage.startsWith("⚠️ Agent failed")
+              ? info.replacementMessage
+              : `⚠️ Agent failed before reply: ${info.replacementMessage
+                  .replace(/^🚫\s*/, "🚫 ")
+                  .replace(/\.\s*$/, "")}.\nLogs: openclaw logs --follow`;
+            afterToolCallBlock = { ...info, replacementMessage: stylizedReplacement };
+            // Persist a user-facing block message as a new assistant
+            // message so the SPA's `chat.history` reload after `final`
+            // shows the block notice in the transcript. Tool result
+            // already on disk (truthful history) — only what comes after
+            // is suppressed.
+            try {
+              const { appendAssistantMessageToSessionTranscript } =
+                await import("../../../config/sessions/transcript.js");
+              await appendAssistantMessageToSessionTranscript({
+                agentId: sessionAgentId,
+                sessionKey: params.sessionKey,
+                text: stylizedReplacement,
+                idempotencyKey: `hook-block:after_tool_call:${params.runId}:${info.toolCallId}`,
+                updateMode: "inline",
+              });
+            } catch (err) {
+              log.warn(
+                `after_tool_call block: failed to persist replacement message: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+            // Force-emit terminal lifecycle (same reason as inline
+            // llm_output block — the SDK will skip its own agent_end on
+            // abort, so server-chat never sees a final/error frame).
+            try {
+              emitAgentEvent({
+                runId: params.runId,
+                stream: "lifecycle",
+                data: {
+                  phase: "error",
+                  error: stylizedReplacement,
+                  errorKind: "hook_block",
+                  hookOverride: true,
+                  livenessState: "blocked",
+                  endedAt: Date.now(),
+                },
+              });
+            } catch (err) {
+              log.warn(
+                `after_tool_call block: failed to emit terminal lifecycle: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+            // Abort the upstream prompt() call so the model does not
+            // consume the just-emitted tool result and does not iterate
+            // further this turn.
+            try {
+              void activeSession.abort();
+            } catch (err) {
+              log.warn(
+                `after_tool_call block: activeSession.abort() failed: ${
+                  (err as Error)?.message ?? String(err)
+                }`,
+              );
+            }
+          },
           verboseLevel: params.verboseLevel,
           reasoningMode: params.reasoningLevel ?? "off",
           toolResultFormat: params.toolResultFormat,
@@ -2479,10 +2683,50 @@ export async function runEmbeddedAttempt(
                 );
                 const { resolveBlockMessage } =
                   await import("../../../plugins/hook-decision-types.js");
+                const blockReplacementMsg = resolveBlockMessage(beforeRunDecision);
+                // Persist the user's original message into the JSONL with
+                // its agent-visible content REPLACED by the policy notice
+                // and the original moved into a sidecar field for SPA-only
+                // display. This implements the "the human sees what they
+                // typed; no agent can ever see it" contract for blocked
+                // user inputs. Without this, the user message is never
+                // persisted (since skipPromptSubmission=true) and the SPA
+                // shows nothing for the user's blocked turn.
+                log.warn(
+                  `before_agent_run block: about to persist redacted user message — promptLen=${params.prompt?.length ?? 0} sessionKey=${params.sessionKey} agentId=${sessionAgentId}`,
+                );
+                if (params.prompt) {
+                  try {
+                    const { appendBlockedUserMessageToSessionTranscript } =
+                      await import("../../../config/sessions/transcript.js");
+                    log.warn(
+                      `before_agent_run block: calling appendBlockedUserMessageToSessionTranscript now`,
+                    );
+                    const blockedResult = await appendBlockedUserMessageToSessionTranscript({
+                      agentId: sessionAgentId,
+                      sessionKey: params.sessionKey,
+                      originalText: params.prompt,
+                      redactedText: blockReplacementMsg,
+                      pluginId: beforeRunPluginId,
+                      reason: beforeRunDecision.reason ?? "blocked by hook",
+                      idempotencyKey: `hook-block:before_agent_run:user:${params.runId}`,
+                      updateMode: "inline",
+                    });
+                    log.warn(
+                      `before_agent_run block: appendBlocked returned ${JSON.stringify(blockedResult)}`,
+                    );
+                  } catch (err) {
+                    log.warn(
+                      `before_agent_run block: failed to persist redacted user message: ${
+                        (err as Error)?.message ?? String(err)
+                      }`,
+                    );
+                  }
+                }
                 // before_agent_run does not support `retry`: the prompt has not
                 // changed yet, so retry would loop on the same input. Surface the
                 // block message and terminate the turn.
-                promptError = new Error(resolveBlockMessage(beforeRunDecision));
+                promptError = new Error(blockReplacementMsg);
                 promptErrorSource = "hook:before_agent_run";
                 skipPromptSubmission = true;
               } else if (beforeRunDecision.outcome === "ask") {
@@ -2505,18 +2749,63 @@ export async function runEmbeddedAttempt(
                   log.warn(
                     `before_agent_run hook approval ${approvalResult} (plugin=${beforeRunPluginId})${approvalResult === "cancelled" ? " — no approval route available (is control-ui connected?)" : ""}`,
                   );
-                  promptError = new Error(
-                    beforeRunDecision.denialMessage ?? "Request denied by owner.",
-                  );
+                  const denyReplacementMsg =
+                    beforeRunDecision.denialMessage ?? "Request denied by owner.";
+                  // Persist the user's original prompt with sidecar so the SPA
+                  // shows the original text but agents only ever see the deny notice.
+                  if (params.prompt) {
+                    try {
+                      const { appendBlockedUserMessageToSessionTranscript } =
+                        await import("../../../config/sessions/transcript.js");
+                      await appendBlockedUserMessageToSessionTranscript({
+                        agentId: sessionAgentId,
+                        sessionKey: params.sessionKey,
+                        originalText: params.prompt,
+                        redactedText: denyReplacementMsg,
+                        pluginId: beforeRunPluginId,
+                        reason: beforeRunDecision.reason ?? `approval ${approvalResult}`,
+                        idempotencyKey: `hook-ask-deny:before_agent_run:user:${params.runId}`,
+                        updateMode: "inline",
+                      });
+                    } catch (err) {
+                      log.warn(
+                        `before_agent_run ask-deny: failed to persist redacted user message: ${
+                          (err as Error)?.message ?? String(err)
+                        }`,
+                      );
+                    }
+                  }
+                  promptError = new Error(denyReplacementMsg);
                   promptErrorSource = "hook:before_agent_run";
                   skipPromptSubmission = true;
                 } else if (approvalResult === "timeout") {
                   const behavior = beforeRunDecision.timeoutBehavior ?? "deny";
                   if (behavior === "deny") {
                     log.warn(`before_agent_run hook approval timed out (behavior=deny)`);
-                    promptError = new Error(
-                      beforeRunDecision.denialMessage ?? "Approval timed out.",
-                    );
+                    const timeoutMsg = beforeRunDecision.denialMessage ?? "Approval timed out.";
+                    if (params.prompt) {
+                      try {
+                        const { appendBlockedUserMessageToSessionTranscript } =
+                          await import("../../../config/sessions/transcript.js");
+                        await appendBlockedUserMessageToSessionTranscript({
+                          agentId: sessionAgentId,
+                          sessionKey: params.sessionKey,
+                          originalText: params.prompt,
+                          redactedText: timeoutMsg,
+                          pluginId: beforeRunPluginId,
+                          reason: beforeRunDecision.reason ?? "approval timed out",
+                          idempotencyKey: `hook-ask-timeout:before_agent_run:user:${params.runId}`,
+                          updateMode: "inline",
+                        });
+                      } catch (err) {
+                        log.warn(
+                          `before_agent_run ask-timeout: failed to persist redacted user message: ${
+                            (err as Error)?.message ?? String(err)
+                          }`,
+                        );
+                      }
+                    }
+                    promptError = new Error(timeoutMsg);
                     promptErrorSource = "hook:before_agent_run";
                     skipPromptSubmission = true;
                   } else {
@@ -2682,6 +2971,26 @@ export async function runEmbeddedAttempt(
               submittedPrompt: effectivePrompt,
               transcriptPrompt: params.transcriptPrompt,
             });
+
+            // HOOK_BLOCK_RETRY: on retry attempts, the SDK persisted ANOTHER
+            // copy of the user prompt at the start of this attempt — scrub
+            // it so the SPA does not show stacked duplicate user bubbles.
+            // Keep the FIRST occurrence (which is from the original turn);
+            // remove only the most recently appended user message that
+            // matches our prompt text.
+            if ((params.llmOutputRetryCount ?? 0) > 0) {
+              try {
+                const { redactDuplicateUserMessage } =
+                  await import("../../../plugins/hook-redaction.js");
+                await redactDuplicateUserMessage(params.sessionFile, effectivePrompt);
+              } catch (err) {
+                log.warn(
+                  `llm_output retry: failed to scrub duplicate user message: ${
+                    (err as Error)?.message ?? String(err)
+                  }`,
+                );
+              }
+            }
           }
         } catch (err) {
           yieldAborted =
@@ -2700,6 +3009,26 @@ export async function runEmbeddedAttempt(
             if (yieldMessage) {
               await persistSessionsYieldContextMessage(activeSession, yieldMessage);
             }
+          } else if (inlineLlmOutputBlock) {
+            // The inline `llm_output` hook fired a block decision and we
+            // aborted prompt() to end the turn. Re-tag this as a hook block
+            // (not a generic prompt failure) so the rest of the attempt
+            // path treats it like the legacy llm_output block flow:
+            // assistantTexts → [replacement], finalState reflects block.
+            promptError = new Error(inlineLlmOutputBlock.replacementMessage);
+            promptErrorSource = "hook:llm_output";
+            // Replace assistantTexts with the policy notice so the
+            // attempt.summary uses it as the user-visible reply text.
+            assistantTexts.length = 0;
+            assistantTexts.push(inlineLlmOutputBlock.replacementMessage);
+          } else if (afterToolCallBlock) {
+            // Same shape as inline llm_output block but triggered from
+            // the after_tool_call hook. The tool already executed but the
+            // model is prevented from iterating further this turn.
+            promptError = new Error(afterToolCallBlock.replacementMessage);
+            promptErrorSource = "hook:llm_output";
+            assistantTexts.length = 0;
+            assistantTexts.push(afterToolCallBlock.replacementMessage);
           } else {
             promptError = err;
             promptErrorSource = "prompt";
@@ -3048,214 +3377,286 @@ export async function runEmbeddedAttempt(
       // code; a previous placement in the inner `finally` (line ~2434)
       // caused it to fire first and consume the deferred state.
       try {
-
-      if (hookRunner?.hasHooks("llm_output")) {
-        const { resolveBlockMessage, DEFAULT_BLOCK_MAX_RETRIES } =
-          await import("../../../plugins/hook-decision-types.js");
-        const llmOutputResult = await hookRunner.runLlmOutput(
-          {
-            runId: params.runId,
-            sessionId: params.sessionId,
-            provider: params.provider,
-            model: params.modelId,
-            prompt: finalPromptText ?? params.prompt,
-            assistantTexts,
-            lastAssistant,
-            usage: attemptUsage,
-          },
-          {
-            runId: params.runId,
-            agentId: hookAgentId,
-            sessionKey: params.sessionKey,
-            sessionId: params.sessionId,
-            workspaceDir: params.workspaceDir,
-            messageProvider: params.messageProvider ?? undefined,
-            trigger: params.trigger,
-            channelId: params.messageChannel ?? params.messageProvider ?? undefined,
-          },
-        );
-        const llmOutputDecision = llmOutputResult?.decision;
-        const llmOutputPluginId = llmOutputResult?.pluginId ?? "unknown";
-        // Helper: scrub assistant messages from the persisted transcript and
-        // optionally replace the in-memory assistantTexts with a policy
-        // replacement message. Used by both `block` (replace + end normally)
-        // and the denied `ask` flow.
-        const replaceLlmOutputResponse = async (
-          reason: string,
-          hookPoint: string,
-          replacementMessage?: string,
-        ) => {
-          const { redactMessages } = await import("../../../plugins/hook-redaction.js");
-          await redactMessages(
-            params.sessionFile,
-            {
-              match: {
-                role: "assistant",
-                contentSubstring: (assistantTexts[0] ?? "").slice(0, 100),
-              },
-            },
-            {
-              reason,
-              hookPoint,
-              pluginId: llmOutputPluginId,
-              timestamp: Date.now(),
-            },
-          );
+        // If the inline `llm_output` or after_tool_call hook fired a block
+        // decision but prompt() happened to finish normally before the abort
+        // took effect, ensure the block flow still runs by promoting it to a
+        // hook:llm_output error.
+        if (inlineLlmOutputBlock && !promptError) {
+          promptError = new Error(inlineLlmOutputBlock.replacementMessage);
+          promptErrorSource = "hook:llm_output";
           assistantTexts.length = 0;
-          if (replacementMessage) {
-            assistantTexts.push(replacementMessage);
-          }
-        };
-
-        if (llmOutputDecision?.outcome === "block") {
-          const wantsRetry = llmOutputDecision.retry === true;
-          const maxRetries = llmOutputDecision.maxRetries ?? DEFAULT_BLOCK_MAX_RETRIES;
-          const message = resolveBlockMessage(llmOutputDecision);
-          if (wantsRetry && llmOutputRetryCount < maxRetries) {
-            log.warn(
-              `llm_output hook blocked by ${llmOutputPluginId} (retry ${llmOutputRetryCount + 1}/${maxRetries}): ${llmOutputDecision.reason}`,
-            );
-            // Scrub the rejected response from the transcript before retrying so
-            // we do not pollute the cached prefix or replay invalid history.
-            await replaceLlmOutputResponse(llmOutputDecision.reason, "llm_output:retry");
-            llmOutputRetryCount += 1;
-            llmOutputRetryRequested = true;
-            // Mark for the outer attempt loop to re-invoke the LLM.
-            promptErrorSource = "hook:llm_output";
-          } else {
-            if (wantsRetry) {
-              log.warn(
-                `llm_output hook blocked by ${llmOutputPluginId}: retry budget exhausted (${llmOutputRetryCount}/${maxRetries}), terminating turn with block message`,
-              );
-            } else {
-              log.warn(
-                `llm_output hook blocked by ${llmOutputPluginId}: ${llmOutputDecision.reason}`,
-              );
-            }
-            // Scrub the streamed response from the transcript and set a
-            // prompt error so the run loop surfaces the block message to
-            // the user.  We cannot silently replace the in-memory
-            // assistantTexts because the streaming buffer in server-chat
-            // has already delivered the original text to the UI — the
-            // only reliable way to override it is through the error path
-            // which replaces the chat final event with an error event.
-            await replaceLlmOutputResponse(llmOutputDecision.reason, "llm_output", message);
-            promptError = new Error(message);
-            promptErrorSource = "hook:llm_output";
-            llmOutputRetryRequested = false;
-          }
-        } else if (llmOutputDecision?.outcome === "ask") {
-          log.warn(
-            `llm_output hook requesting approval (${llmOutputPluginId}): ${llmOutputDecision.reason}`,
-          );
-          const { requestHookApproval } = await import("../../../plugins/hook-approval.js");
-          const approvalResult = await requestHookApproval({
-            hookPoint: "llm_output",
-            decision: llmOutputDecision,
-            pluginId: llmOutputPluginId,
-            runId: params.runId,
-            sessionKey: params.sessionKey,
-            agentId: hookAgentId,
-            channelId: params.messageChannel ?? params.messageProvider ?? undefined,
-            signal: params.abortSignal,
-            log,
-          });
-          const shouldDeny =
-            approvalResult === "deny" ||
-            approvalResult === "cancelled" ||
-            (approvalResult === "timeout" &&
-              (llmOutputDecision.timeoutBehavior ?? "deny") === "deny");
-          if (shouldDeny) {
-            const denialMessage =
-              llmOutputDecision.denialMessage ?? "Response withheld pending review.";
-            log.warn(
-              `llm_output hook approval ${approvalResult} (plugin=${llmOutputPluginId}), withholding response${approvalResult === "cancelled" ? " — no approval route available" : ""}`,
-            );
-            await replaceLlmOutputResponse(
-              llmOutputDecision.reason,
-              "llm_output:ask",
-              denialMessage,
-            );
-            // Surface the denial through the error path so the
-            // streaming buffer (which already delivered the original
-            // text) is overridden by the error event.
-            promptError = new Error(denialMessage);
-            promptErrorSource = "hook:llm_output";
-          } else {
-            log.debug(`llm_output hook approval granted (${approvalResult}), delivering response`);
-          }
+          assistantTexts.push(inlineLlmOutputBlock.replacementMessage);
+        } else if (afterToolCallBlock && !promptError) {
+          promptError = new Error(afterToolCallBlock.replacementMessage);
+          promptErrorSource = "hook:llm_output";
+          assistantTexts.length = 0;
+          assistantTexts.push(afterToolCallBlock.replacementMessage);
         }
 
-        // The lifecycle terminal event was deferred while the hook ran.
-        // Resolve it now: if the hook blocked or denied the response,
-        // override to "error" so server-chat broadcasts `state: "error"`
-        // instead of `state: "final"` with the (now-stale) streamed text.
-        // This covers both non-retry blocks (promptError set) and retry
-        // blocks (promptErrorSource set, promptError null) — in both cases
-        // the original streamed text must NOT reach the user.
-        if (promptError) {
+        // Inline-block path: when the stream subscriber already redacted the
+        // visible bubble and persisted the replacement, skip the legacy
+        // post-prompt() llm_output orchestration block (which would otherwise
+        // re-fire the hook). However, we still need to emit a terminal
+        // lifecycle event for the chat stream — otherwise the SPA / WS
+        // listeners never see `state: "error"` or `state: "final"` and
+        // hang until timeout. Resolve the lifecycle here for the inline path,
+        // then skip the legacy block.
+        if (inlineLlmOutputBlock || afterToolCallBlock) {
+          const blockMsg =
+            inlineLlmOutputBlock?.replacementMessage ??
+            afterToolCallBlock?.replacementMessage ??
+            "blocked by hook";
           const errMsg =
             promptError instanceof Error
               ? promptError.message
-              : String(promptError);
+              : ((promptError as Error)?.message ?? promptError ?? blockMsg);
           resolveTerminalLifecycle({ error: errMsg });
-        } else if (promptErrorSource === "hook:llm_output") {
-          // Retry case: the original response was scrubbed; emit error to
-          // clear the streaming buffer before the retry starts fresh.
-          resolveTerminalLifecycle({ error: "Response blocked by policy — retrying." });
-        } else {
-          resolveTerminalLifecycle();
-        }
-      }
-
-      // Fire async llm_output handlers (non-blocking)
-      let cleanupAsyncLlmOutput: (() => void) | undefined;
-      if (hookRunner?.hasAsyncHooks("llm_output")) {
-        cleanupAsyncLlmOutput = hookRunner.fireAsync(
-          "llm_output",
-          {
-            runId: params.runId,
-            sessionId: params.sessionId,
-            provider: params.provider,
-            model: params.modelId,
-            prompt: finalPromptText ?? params.prompt,
-            assistantTexts,
-            lastAssistant,
-            usage: attemptUsage,
-          },
-          {
-            runId: params.runId,
-            agentId: hookAgentId,
-            sessionKey: params.sessionKey,
-            sessionId: params.sessionId,
-            workspaceDir: params.workspaceDir,
-            messageProvider: params.messageProvider ?? undefined,
-            trigger: params.trigger,
-            channelId: params.messageChannel ?? params.messageProvider ?? undefined,
-          },
-          async (decision, pluginId) => {
-            log.warn(
-              `llm_output async intervention from ${pluginId}: ${decision.outcome} — ${(decision as { reason?: string }).reason ?? "no reason"}`,
-            );
-            // For now, log the intervention. Full stream abort + retraction requires
-            // wiring into the channel delivery pipeline (deferred).
-            // The persisted assistant message can be scrubbed immediately:
-            if (decision.outcome === "block") {
-              const { redactMessages } = await import("../../../plugins/hook-redaction.js");
-              await redactMessages(
-                params.sessionFile,
-                { runId: params.runId },
-                {
-                  reason: (decision as { reason?: string }).reason ?? "async_intervention",
-                  hookPoint: "llm_output",
-                  pluginId,
-                  timestamp: Date.now(),
+        } else if (hookRunner?.hasHooks("llm_output")) {
+          const { resolveBlockMessage, DEFAULT_BLOCK_MAX_RETRIES } =
+            await import("../../../plugins/hook-decision-types.js");
+          const llmOutputResult = await hookRunner.runLlmOutput(
+            {
+              runId: params.runId,
+              sessionId: params.sessionId,
+              provider: params.provider,
+              model: params.modelId,
+              prompt: finalPromptText ?? params.prompt,
+              assistantTexts,
+              lastAssistant,
+              usage: attemptUsage,
+            },
+            {
+              runId: params.runId,
+              agentId: hookAgentId,
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              workspaceDir: params.workspaceDir,
+              messageProvider: params.messageProvider ?? undefined,
+              trigger: params.trigger,
+              channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+            },
+          );
+          const llmOutputDecision = llmOutputResult?.decision;
+          const llmOutputPluginId = llmOutputResult?.pluginId ?? "unknown";
+          // Helper: scrub assistant messages from the persisted transcript and
+          // optionally replace the in-memory assistantTexts with a policy
+          // replacement message. Used by both `block` (replace + end normally)
+          // and the denied `ask` flow.
+          const replaceLlmOutputResponse = async (
+            reason: string,
+            hookPoint: string,
+            replacementMessage?: string,
+          ) => {
+            const { redactMessages } = await import("../../../plugins/hook-redaction.js");
+            await redactMessages(
+              params.sessionFile,
+              {
+                match: {
+                  role: "assistant",
+                  contentSubstring: (assistantTexts[0] ?? "").slice(0, 100),
                 },
-              ).catch((err) => log.warn(`async llm_output cleanup failed: ${err}`));
+              },
+              {
+                reason,
+                hookPoint,
+                pluginId: llmOutputPluginId,
+                timestamp: Date.now(),
+              },
+            );
+            assistantTexts.length = 0;
+            if (replacementMessage) {
+              assistantTexts.push(replacementMessage);
+              // Persist the replacement as the new assistant message on disk so
+              // the SPA's history reload after `final` shows the block warning
+              // in the transcript instead of an empty bubble (or stale streamed
+              // text). Without this, `chat.history` returns only the user
+              // message and the in-memory block bubble vanishes on reload.
+              try {
+                const { appendAssistantMessageToSessionTranscript } =
+                  await import("../../../config/sessions/transcript.js");
+                await appendAssistantMessageToSessionTranscript({
+                  agentId: hookAgentId,
+                  sessionKey: params.sessionKey,
+                  text: replacementMessage,
+                  idempotencyKey: `hook-block:${hookPoint}:${params.runId}`,
+                  updateMode: "inline",
+                });
+              } catch (err) {
+                log.warn(
+                  `failed to persist hook-block replacement message to transcript: ${
+                    (err as Error)?.message ?? String(err)
+                  }`,
+                );
+              }
             }
-          },
+          };
+
+          if (llmOutputDecision?.outcome === "block") {
+            const wantsRetry = llmOutputDecision.retry === true;
+            const maxRetries = llmOutputDecision.maxRetries ?? DEFAULT_BLOCK_MAX_RETRIES;
+            const message = resolveBlockMessage(llmOutputDecision);
+            if (wantsRetry && llmOutputRetryCount < maxRetries) {
+              const retryNum = llmOutputRetryCount + 1;
+              log.warn(
+                `llm_output hook blocked by ${llmOutputPluginId} (retry ${retryNum}/${maxRetries}): ${llmOutputDecision.reason}`,
+              );
+              // Replace the rejected response in-place with a retry notice so
+              // the user sees what happened instead of a vanishing bubble.
+              const retryNotice =
+                `⚠️ Response blocked — retrying (${retryNum}/${maxRetries})...\n` +
+                `Reason: ${llmOutputDecision.reason}`;
+              await replaceLlmOutputResponse(
+                llmOutputDecision.reason,
+                "llm_output:retry",
+                retryNotice,
+              );
+              llmOutputRetryCount += 1;
+              llmOutputRetryRequested = true;
+              // Mark for the outer attempt loop to re-invoke the LLM.
+              promptErrorSource = "hook:llm_output";
+            } else {
+              if (wantsRetry) {
+                log.warn(
+                  `llm_output hook blocked by ${llmOutputPluginId}: retry budget exhausted (${llmOutputRetryCount}/${maxRetries}), terminating turn with block message`,
+                );
+              } else {
+                log.warn(
+                  `llm_output hook blocked by ${llmOutputPluginId}: ${llmOutputDecision.reason}`,
+                );
+              }
+              // Replace the streamed response with the final block message.
+              const finalMessage = wantsRetry
+                ? `⚠️ Response blocked after ${llmOutputRetryCount} ${llmOutputRetryCount === 1 ? "retry" : "retries"}.\n` +
+                  `Reason: ${llmOutputDecision.reason}\nLogs: openclaw logs --follow`
+                : message;
+              await replaceLlmOutputResponse(llmOutputDecision.reason, "llm_output", finalMessage);
+              promptError = new Error(message);
+              promptErrorSource = "hook:llm_output";
+              llmOutputRetryRequested = false;
+            }
+          } else if (llmOutputDecision?.outcome === "ask") {
+            log.warn(
+              `llm_output hook requesting approval (${llmOutputPluginId}): ${llmOutputDecision.reason}`,
+            );
+            const { requestHookApproval } = await import("../../../plugins/hook-approval.js");
+            const approvalResult = await requestHookApproval({
+              hookPoint: "llm_output",
+              decision: llmOutputDecision,
+              pluginId: llmOutputPluginId,
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              agentId: hookAgentId,
+              channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+              signal: params.abortSignal,
+              log,
+            });
+            const shouldDeny =
+              approvalResult === "deny" ||
+              approvalResult === "cancelled" ||
+              (approvalResult === "timeout" &&
+                (llmOutputDecision.timeoutBehavior ?? "deny") === "deny");
+            if (shouldDeny) {
+              const denialMessage =
+                llmOutputDecision.denialMessage ?? "Response withheld pending review.";
+              log.warn(
+                `llm_output hook approval ${approvalResult} (plugin=${llmOutputPluginId}), withholding response${approvalResult === "cancelled" ? " — no approval route available" : ""}`,
+              );
+              await replaceLlmOutputResponse(
+                llmOutputDecision.reason,
+                "llm_output:ask",
+                denialMessage,
+              );
+              // Surface the denial through the error path so the
+              // streaming buffer (which already delivered the original
+              // text) is overridden by the error event.
+              promptError = new Error(denialMessage);
+              promptErrorSource = "hook:llm_output";
+            } else {
+              log.debug(
+                `llm_output hook approval granted (${approvalResult}), delivering response`,
+              );
+            }
+          }
+
+          // The lifecycle terminal event was deferred while the hook ran.
+          // Resolve it now: if the hook blocked or denied the response,
+          // override to "error" so server-chat broadcasts `state: "error"`
+          // instead of `state: "final"` with the (now-stale) streamed text.
+          // This covers both non-retry blocks (promptError set) and retry
+          // blocks (promptErrorSource set, promptError null) — in both cases
+          // the original streamed text must NOT reach the user.
+          if (promptError) {
+            const errMsg =
+              promptError instanceof Error
+                ? promptError.message
+                : ((promptError as Error)?.message ?? promptError);
+            resolveTerminalLifecycle({ error: errMsg });
+          } else if (promptErrorSource === "hook:llm_output") {
+            // Retry case: the original response was scrubbed; emit error to
+            // clear the streaming buffer before the retry starts fresh.
+            resolveTerminalLifecycle({ error: "Response blocked by policy — retrying." });
+          } else {
+            resolveTerminalLifecycle();
+          }
+        }
+
+        // Fire async llm_output handlers (non-blocking)
+        let cleanupAsyncLlmOutput: (() => void) | undefined;
+        if (hookRunner?.hasAsyncHooks("llm_output")) {
+          cleanupAsyncLlmOutput = hookRunner.fireAsync(
+            "llm_output",
+            {
+              runId: params.runId,
+              sessionId: params.sessionId,
+              provider: params.provider,
+              model: params.modelId,
+              prompt: finalPromptText ?? params.prompt,
+              assistantTexts,
+              lastAssistant,
+              usage: attemptUsage,
+            },
+            {
+              runId: params.runId,
+              agentId: hookAgentId,
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              workspaceDir: params.workspaceDir,
+              messageProvider: params.messageProvider ?? undefined,
+              trigger: params.trigger,
+              channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+            },
+            async (decision, pluginId) => {
+              log.warn(
+                `llm_output async intervention from ${pluginId}: ${decision.outcome} — ${(decision as { reason?: string }).reason ?? "no reason"}`,
+              );
+              // For now, log the intervention. Full stream abort + retraction requires
+              // wiring into the channel delivery pipeline (deferred).
+              // The persisted assistant message can be scrubbed immediately:
+              if (decision.outcome === "block") {
+                const { redactMessages } = await import("../../../plugins/hook-redaction.js");
+                await redactMessages(
+                  params.sessionFile,
+                  { runId: params.runId },
+                  {
+                    reason: (decision as { reason?: string }).reason ?? "async_intervention",
+                    hookPoint: "llm_output",
+                    pluginId,
+                    timestamp: Date.now(),
+                  },
+                ).catch((err) => log.warn(`async llm_output cleanup failed: ${err}`));
+              }
+            },
+          );
+        }
+
+        const observedReplayMetadata = buildAttemptReplayMetadata({
+          toolMetas: toolMetasNormalized,
+          didSendViaMessagingTool: didSendViaMessagingTool(),
+          successfulCronAdds: getSuccessfulCronAdds(),
+        });
+        const replayMetadata = replayMetadataFromState(
+          observeReplayMetadata(getReplayState(), observedReplayMetadata),
         );
-      }
 
       const observedReplayMetadata = buildAttemptReplayMetadata({
         toolMetas: toolMetasNormalized,
@@ -3363,7 +3764,6 @@ export async function runEmbeddedAttempt(
         llmOutputRetryRequested,
         llmOutputRetryCount,
       };
-
       } finally {
         // Safety net: if the llm_output hook deferred the lifecycle terminal
         // event but we're leaving without having resolved it (e.g. an
@@ -3372,7 +3772,6 @@ export async function runEmbeddedAttempt(
         // This is a no-op when the hook code already resolved it.
         resolveTerminalLifecycle();
       }
-
     } finally {
       if (trajectoryRecorder && !trajectoryEndRecorded) {
         trajectoryRecorder.recordEvent("session.ended", {

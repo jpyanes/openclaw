@@ -228,6 +228,128 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
   return { ok: true, sessionFile, messageId };
 }
 
+/**
+ * Persist a user message that was blocked by `before_agent_run` (or any
+ * pre-LLM hook) with redacted content visible to the agent and the original
+ * content stashed in a sidecar field for SPA-only display.
+ *
+ * Contract:
+ *   - `message.content` is REPLACED with a stub so the agent transcript only
+ *     ever shows the policy notice. No agent that reads JSONL `message.content`
+ *     can ever see the original.
+ *   - `originalBlockedContent` is a TOP-LEVEL JSONL field (next to `message`),
+ *     NOT inside `message`. SPA reads this and renders it to the human user
+ *     while the agent reads `message.content` and only sees the stub.
+ *   - Idempotency key prevents double-writes if the runner retries.
+ */
+export async function appendBlockedUserMessageToSessionTranscript(params: {
+  agentId?: string;
+  sessionKey: string;
+  /** The user's actual prompt — moved to the sidecar, never persisted in message.content. */
+  originalText: string;
+  /** Replacement content the agent transcript will see (the policy notice). */
+  redactedText: string;
+  /** Plugin id that requested the block, for the sidecar metadata. */
+  pluginId: string;
+  /** Reason string from the hook decision, for the sidecar metadata. */
+  reason: string;
+  idempotencyKey?: string;
+  storePath?: string;
+  updateMode?: SessionTranscriptUpdateMode;
+}): Promise<SessionTranscriptAppendResult> {
+  const sessionKey = params.sessionKey.trim();
+  if (!sessionKey) {
+    return { ok: false, reason: "missing sessionKey" };
+  }
+  if (!params.originalText) {
+    return { ok: false, reason: "empty originalText" };
+  }
+
+  const storePath = params.storePath ?? resolveDefaultSessionStorePath(params.agentId);
+  const store = loadSessionStore(storePath, { skipCache: true });
+  const normalizedKey = normalizeStoreSessionKey(sessionKey);
+  const entry = (store[normalizedKey] ?? store[sessionKey]) as SessionEntry | undefined;
+  if (!entry?.sessionId) {
+    return { ok: false, reason: `unknown sessionKey: ${sessionKey}` };
+  }
+
+  let sessionFile: string;
+  try {
+    const resolvedSessionFile = await resolveAndPersistSessionFile({
+      sessionId: entry.sessionId,
+      sessionKey,
+      sessionStore: store,
+      storePath,
+      sessionEntry: entry,
+      agentId: params.agentId,
+      sessionsDir: path.dirname(storePath),
+    });
+    sessionFile = resolvedSessionFile.sessionFile;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: formatErrorMessage(err),
+    };
+  }
+
+  await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
+
+  const explicitIdempotencyKey = params.idempotencyKey;
+  const existingMessageId = explicitIdempotencyKey
+    ? await transcriptHasIdempotencyKey(sessionFile, explicitIdempotencyKey)
+    : undefined;
+  if (existingMessageId) {
+    return { ok: true, sessionFile, messageId: existingMessageId };
+  }
+
+  // Write the user message directly as a raw JSONL append (not via
+  // SessionManager.appendMessage) to avoid the TOCTOU race where the
+  // runner's own SessionManager re-reads the file and overwrites our
+  // line. The JSONL format is stable: one JSON object per line.
+  const messageId = `blocked-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const nowMs = Date.now();
+  const jsonlEntry: Record<string, unknown> = {
+    type: "message",
+    id: messageId,
+    parentId: null,
+    timestamp: new Date(nowMs).toISOString(),
+    ...(explicitIdempotencyKey ? { idempotencyKey: explicitIdempotencyKey } : {}),
+    message: {
+      role: "user",
+      content: [{ type: "text", text: params.redactedText }],
+      timestamp: nowMs,
+    },
+    originalBlockedContent: {
+      content: [{ type: "text", text: params.originalText }],
+      blockedBy: params.pluginId,
+      reason: params.reason,
+      blockedAt: nowMs,
+    },
+  };
+
+  await fs.promises.appendFile(sessionFile, JSON.stringify(jsonlEntry) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+
+  switch (params.updateMode ?? "inline") {
+    case "inline":
+      emitSessionTranscriptUpdate({
+        sessionFile,
+        sessionKey,
+        message: jsonlEntry.message as Parameters<SessionManager["appendMessage"]>[0],
+        messageId,
+      });
+      break;
+    case "file-only":
+      emitSessionTranscriptUpdate(sessionFile);
+      break;
+    case "none":
+      break;
+  }
+  return { ok: true, sessionFile, messageId };
+}
+
 async function transcriptHasIdempotencyKey(
   transcriptPath: string,
   idempotencyKey: string,

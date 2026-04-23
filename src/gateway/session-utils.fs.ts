@@ -113,10 +113,21 @@ export function readSessionMessages(
       const parsed = JSON.parse(line);
       if (parsed?.message) {
         messageSeq += 1;
+        // Forward the `originalBlockedContent` sidecar (set by
+        // appendBlockedUserMessageToSessionTranscript when a hook blocks a
+        // user input) so the SPA can render the original to the human
+        // while the agent transcript only ever contains the redacted stub.
+        const originalBlocked =
+          parsed.originalBlockedContent &&
+          typeof parsed.originalBlockedContent === "object" &&
+          !Array.isArray(parsed.originalBlockedContent)
+            ? (parsed.originalBlockedContent as Record<string, unknown>)
+            : undefined;
         messages.push(
           attachOpenClawTranscriptMeta(parsed.message, {
             ...(typeof parsed.id === "string" ? { id: parsed.id } : {}),
             seq: messageSeq,
+            ...(originalBlocked ? { originalBlockedContent: originalBlocked } : {}),
           }),
         );
         continue;
