@@ -13,6 +13,7 @@ import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionBinding } from "../../agents/cli-session.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
+import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
@@ -931,7 +932,18 @@ export async function runAgentTurnWithFallback(params: {
             );
           }
 
-          if (isCliProvider(provider, runtimeConfig)) {
+          const agentRuntimeOverride = normalizeOptionalString(
+            params.getActiveSessionEntry()?.agentRuntimeOverride,
+          );
+          const cliExecutionProvider =
+            resolveCliRuntimeExecutionProvider({
+              provider,
+              cfg: runtimeConfig,
+              agentId: params.followupRun.run.agentId,
+              runtimeOverride: agentRuntimeOverride,
+            }) ?? provider;
+
+          if (isCliProvider(cliExecutionProvider, runtimeConfig)) {
             const startedAt = Date.now();
             notifyAgentRunStart();
             emitAgentEvent({
@@ -944,11 +956,15 @@ export async function runAgentTurnWithFallback(params: {
             });
             const cliSessionBinding = getCliSessionBinding(
               params.getActiveSessionEntry(),
-              provider,
+              cliExecutionProvider,
             );
-            const authProfile = resolveRunAuthProfile(params.followupRun.run, provider, {
-              config: runtimeConfig,
-            });
+            const authProfile = resolveRunAuthProfile(
+              params.followupRun.run,
+              cliExecutionProvider,
+              {
+                config: runtimeConfig,
+              },
+            );
             const hookMessageProvider = resolveOriginMessageProvider({
               originatingChannel: params.followupRun.originatingChannel,
               provider: params.sessionCtx.Provider,
@@ -965,7 +981,7 @@ export async function runAgentTurnWithFallback(params: {
                   workspaceDir: params.followupRun.run.workspaceDir,
                   config: runtimeConfig,
                   prompt: params.commandBody,
-                  provider,
+                  provider: cliExecutionProvider,
                   model,
                   thinkLevel: params.followupRun.run.thinkLevel,
                   timeoutMs: params.followupRun.run.timeoutMs,
@@ -1085,6 +1101,11 @@ export async function runAgentTurnWithFallback(params: {
                 groupSpace: normalizeOptionalString(params.sessionCtx.GroupSpace),
                 ...senderContext,
                 ...runBaseParams,
+                ...(agentRuntimeOverride &&
+                agentRuntimeOverride !== "auto" &&
+                agentRuntimeOverride !== "default"
+                  ? { agentHarnessId: agentRuntimeOverride }
+                  : {}),
                 sandboxSessionKey: params.runtimePolicySessionKey,
                 prompt: params.commandBody,
                 extraSystemPrompt: params.followupRun.run.extraSystemPrompt,

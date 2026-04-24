@@ -1,3 +1,4 @@
+import { migrateLegacyRuntimeModelRef } from "../../../agents/model-runtime-aliases.js";
 import { isLegacyModelsAddCodexMetadataModel } from "../../../agents/openai-codex-models-add-legacy.js";
 import { normalizeProviderId } from "../../../agents/provider-id.js";
 import { resolveSingleAccountKeysToMove } from "../../../channels/plugins/setup-promotion-helpers.js";
@@ -198,23 +199,6 @@ type AgentModelConfigPatch = NonNullable<AgentDefaultsPatch["model"]>;
 type AgentEmbeddedHarnessPatch = NonNullable<AgentDefaultsPatch["embeddedHarness"]>;
 type AgentModelsMapPatch = NonNullable<AgentDefaultsPatch["models"]>;
 
-const LEGACY_CODEX_PROVIDER_ID = "codex";
-const OPENAI_PROVIDER_ID = "openai";
-const CODEX_HARNESS_RUNTIME = "codex";
-
-function migrateLegacyCodexModelRef(raw: string): string | null {
-  const trimmed = raw.trim();
-  const separatorIndex = trimmed.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === trimmed.length - 1) {
-    return null;
-  }
-  const provider = trimmed.slice(0, separatorIndex);
-  if (normalizeProviderId(provider) !== LEGACY_CODEX_PROVIDER_ID) {
-    return null;
-  }
-  return `${OPENAI_PROVIDER_ID}/${trimmed.slice(separatorIndex + 1)}`;
-}
-
 function normalizeNoopEmbeddedHarness(raw: AgentEmbeddedHarnessPatch | undefined): {
   value?: AgentEmbeddedHarnessPatch;
   changed: boolean;
@@ -244,47 +228,51 @@ function normalizeNoopEmbeddedHarness(raw: AgentEmbeddedHarnessPatch | undefined
   return { value: next as AgentEmbeddedHarnessPatch, changed };
 }
 
-function ensureCodexEmbeddedHarness(raw: AgentEmbeddedHarnessPatch | undefined): {
+function ensureEmbeddedHarnessRuntime(
+  raw: AgentEmbeddedHarnessPatch | undefined,
+  runtime: string,
+): {
   value: AgentEmbeddedHarnessPatch;
   changed: boolean;
 } {
+  const normalizedRuntime = normalizeProviderId(runtime);
   if (!isRecord(raw)) {
-    return { value: { runtime: CODEX_HARNESS_RUNTIME }, changed: true };
+    return { value: { runtime: normalizedRuntime }, changed: true };
   }
-  const runtime = normalizeOptionalLowercaseString(raw.runtime);
-  if (!runtime || runtime === "auto") {
+  const currentRuntime = normalizeOptionalLowercaseString(raw.runtime);
+  if (!currentRuntime || currentRuntime === "auto") {
     return {
-      value: { ...raw, runtime: CODEX_HARNESS_RUNTIME },
-      changed: runtime !== CODEX_HARNESS_RUNTIME,
+      value: { ...raw, runtime: normalizedRuntime },
+      changed: currentRuntime !== normalizedRuntime,
     };
   }
   return { value: raw, changed: false };
 }
 
-function normalizeLegacyCodexAgentModelConfig(raw: AgentModelConfigPatch | undefined): {
+function normalizeLegacyRuntimeAgentModelConfig(raw: AgentModelConfigPatch | undefined): {
   value?: AgentModelConfigPatch;
   changed: boolean;
-  codexSelected: boolean;
+  selectedRuntime?: string;
 } {
   if (typeof raw === "string") {
-    const migrated = migrateLegacyCodexModelRef(raw);
+    const migrated = migrateLegacyRuntimeModelRef(raw);
     return migrated
-      ? { value: migrated, changed: true, codexSelected: true }
-      : { value: raw, changed: false, codexSelected: false };
+      ? { value: migrated.ref, changed: true, selectedRuntime: migrated.runtime }
+      : { value: raw, changed: false };
   }
   if (!isRecord(raw)) {
-    return { value: raw, changed: false, codexSelected: false };
+    return { value: raw, changed: false };
   }
 
   let changed = false;
-  let codexSelected = false;
+  let selectedRuntime: string | undefined;
   const next = { ...raw };
   if (typeof raw.primary === "string") {
-    const migratedPrimary = migrateLegacyCodexModelRef(raw.primary);
+    const migratedPrimary = migrateLegacyRuntimeModelRef(raw.primary);
     if (migratedPrimary) {
-      next.primary = migratedPrimary;
+      next.primary = migratedPrimary.ref;
       changed = true;
-      codexSelected = true;
+      selectedRuntime = migratedPrimary.runtime;
     }
   }
   if (Array.isArray(raw.fallbacks)) {
@@ -292,16 +280,16 @@ function normalizeLegacyCodexAgentModelConfig(raw: AgentModelConfigPatch | undef
       if (typeof fallback !== "string") {
         return fallback;
       }
-      const migratedFallback = migrateLegacyCodexModelRef(fallback);
+      const migratedFallback = migrateLegacyRuntimeModelRef(fallback);
       if (migratedFallback) {
         changed = true;
-        return migratedFallback;
+        return migratedFallback.ref;
       }
       return fallback;
     });
     next.fallbacks = fallbacks;
   }
-  return { value: next as AgentModelConfigPatch, changed, codexSelected };
+  return { value: next as AgentModelConfigPatch, changed, selectedRuntime };
 }
 
 function mergeModelEntry(
@@ -314,7 +302,9 @@ function mergeModelEntry(
   return { ...legacyEntry, ...currentEntry };
 }
 
-function normalizeLegacyCodexAllowlistModels(rawModels: AgentDefaultsPatch["models"] | undefined): {
+function normalizeLegacyRuntimeAllowlistModels(
+  rawModels: AgentDefaultsPatch["models"] | undefined,
+): {
   value?: AgentDefaultsPatch["models"];
   changed: boolean;
 } {
@@ -324,13 +314,13 @@ function normalizeLegacyCodexAllowlistModels(rawModels: AgentDefaultsPatch["mode
   let changed = false;
   const next: AgentModelsMapPatch = {};
   for (const [rawKey, entry] of Object.entries(rawModels)) {
-    const migratedKey = migrateLegacyCodexModelRef(rawKey);
+    const migratedKey = migrateLegacyRuntimeModelRef(rawKey)?.ref;
     if (!migratedKey) {
       next[rawKey] = mergeModelEntry(entry, next[rawKey]);
     }
   }
   for (const [rawKey, entry] of Object.entries(rawModels)) {
-    const migratedKey = migrateLegacyCodexModelRef(rawKey);
+    const migratedKey = migrateLegacyRuntimeModelRef(rawKey)?.ref;
     if (migratedKey) {
       changed = true;
       next[migratedKey] = mergeModelEntry(entry, next[migratedKey]);
@@ -347,33 +337,34 @@ function normalizeLegacyCodexAgentContainer<T extends AgentDefaultsPatch | Agent
   let changed = false;
   const next = { ...raw } as Record<string, unknown>;
 
-  const model = normalizeLegacyCodexAgentModelConfig(raw.model);
+  const model = normalizeLegacyRuntimeAgentModelConfig(raw.model);
   if (model.changed) {
     next.model = model.value;
     changed = true;
     changes.push(
-      model.codexSelected
-        ? `Moved ${path}.model codex/* refs → openai/* and selected Codex harness.`
-        : `Moved ${path}.model codex/* refs → openai/*.`,
+      model.selectedRuntime
+        ? `Moved ${path}.model legacy runtime refs to canonical provider refs and selected ${model.selectedRuntime} runtime.`
+        : `Moved ${path}.model legacy runtime refs to canonical provider refs.`,
     );
   }
   if ("models" in raw) {
-    const models = normalizeLegacyCodexAllowlistModels(raw.models);
+    const models = normalizeLegacyRuntimeAllowlistModels(raw.models);
     if (models.changed) {
       next.models = models.value;
       changed = true;
-      changes.push(`Moved ${path}.models codex/* keys → openai/*.`);
+      changes.push(`Moved ${path}.models legacy runtime keys to canonical provider keys.`);
     }
   }
-  if (model.codexSelected) {
-    const harness = ensureCodexEmbeddedHarness(raw.embeddedHarness);
+  if (model.selectedRuntime) {
+    const harness = ensureEmbeddedHarnessRuntime(raw.embeddedHarness, model.selectedRuntime);
     if (harness.changed) {
       next.embeddedHarness = harness.value;
       changed = true;
     }
   }
 
-  const suppressHarnessCleanupMessage = model.codexSelected && isRecord(next.embeddedHarness);
+  const suppressHarnessCleanupMessage =
+    Boolean(model.selectedRuntime) && isRecord(next.embeddedHarness);
   const harness = normalizeNoopEmbeddedHarness(next.embeddedHarness as AgentEmbeddedHarnessPatch);
   if (harness.changed) {
     if (harness.value) {

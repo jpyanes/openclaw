@@ -194,4 +194,18 @@ describe("config io paths", () => {
     expect(next?.agents?.defaults?.model).toBe("openai/gpt-5.5");
     expect(next?.agents?.defaults?.embeddedHarness).toEqual({ runtime: "codex" });
   });
+
+  it("migrates legacy CLI model refs during runtime compat", () => {
+    const migrated = applyRuntimeLegacyConfigMigrations({
+      agents: {
+        defaults: {
+          model: "claude-cli/claude-opus-4-7",
+        },
+      },
+    });
+
+    const next = migrated.next as OpenClawConfig | null;
+    expect(next?.agents?.defaults?.model).toBe("anthropic/claude-opus-4-7");
+    expect(next?.agents?.defaults?.embeddedHarness).toEqual({ runtime: "claude-cli" });
+  });
 });

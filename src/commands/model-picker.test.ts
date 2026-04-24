@@ -112,12 +112,37 @@ beforeEach(() => {
 });
 
 describe("promptDefaultModel", () => {
-  it("hides the virtual Codex harness provider from model choices", async () => {
+  it("hides legacy runtime providers from model choices", async () => {
     loadModelCatalog.mockResolvedValue([
       {
         provider: "codex",
         id: "gpt-5.5",
         name: "GPT-5.5",
+      },
+      {
+        provider: "codex-cli",
+        id: "gpt-5.5",
+        name: "GPT-5.5",
+      },
+      {
+        provider: "claude-cli",
+        id: "claude-opus-4-7",
+        name: "Claude Opus",
+      },
+      {
+        provider: "google-gemini-cli",
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini Pro",
+      },
+      {
+        provider: "anthropic",
+        id: "claude-opus-4-7",
+        name: "Claude Opus",
+      },
+      {
+        provider: "google",
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini Pro",
       },
       {
         provider: "openai",
@@ -140,7 +165,11 @@ describe("promptDefaultModel", () => {
     const values = (select.mock.calls[0]?.[0]?.options ?? []).map(
       (opt: { value: string }) => opt.value,
     );
-    expect(values).toEqual(["openai/gpt-5.5"]);
+    expect(values).toEqual([
+      "anthropic/claude-opus-4-7",
+      "google/gemini-3.1-pro-preview",
+      "openai/gpt-5.5",
+    ]);
   });
 
   it("adds auth-route hints for OpenAI API and Codex OAuth models", async () => {

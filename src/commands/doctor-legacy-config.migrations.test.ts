@@ -308,9 +308,9 @@ describe("normalizeCompatibilityConfigValues", () => {
     });
     expect(res.changes).toEqual(
       expect.arrayContaining([
-        "Moved agents.defaults.model codex/* refs → openai/* and selected Codex harness.",
-        "Moved agents.defaults.models codex/* keys → openai/*.",
-        "Moved agents.list.reviewer.model codex/* refs → openai/* and selected Codex harness.",
+        "Moved agents.defaults.model legacy runtime refs to canonical provider refs and selected codex runtime.",
+        "Moved agents.defaults.models legacy runtime keys to canonical provider keys.",
+        "Moved agents.list.reviewer.model legacy runtime refs to canonical provider refs and selected codex runtime.",
       ]),
     );
     expect(res.changes).not.toContain("Removed no-op agents.defaults.embeddedHarness defaults.");
@@ -333,10 +333,38 @@ describe("normalizeCompatibilityConfigValues", () => {
       fallbacks: ["openai/gpt-5.4-mini"],
     });
     expect(res.config.agents?.defaults?.embeddedHarness).toBeUndefined();
-    expect(res.changes).toContain("Moved agents.defaults.model codex/* refs → openai/*.");
-    expect(res.changes).not.toContain(
-      "Moved agents.defaults.model codex/* refs → openai/* and selected Codex harness.",
+    expect(res.changes).toContain(
+      "Moved agents.defaults.model legacy runtime refs to canonical provider refs.",
     );
+    expect(res.changes).not.toContain(
+      "Moved agents.defaults.model legacy runtime refs to canonical provider refs and selected codex runtime.",
+    );
+  });
+
+  it("migrates legacy Claude CLI model refs to Anthropic plus explicit runtime", () => {
+    const res = normalizeCompatibilityConfigValues({
+      agents: {
+        defaults: {
+          model: {
+            primary: "claude-cli/claude-opus-4-7",
+            fallbacks: ["claude-cli/claude-sonnet-4-6"],
+          },
+          models: {
+            "claude-cli/claude-opus-4-7": { alias: "Opus" },
+            "anthropic/claude-opus-4-7": { alias: "Anthropic Opus" },
+          },
+        },
+      },
+    } as unknown as OpenClawConfig);
+
+    expect(res.config.agents?.defaults?.model).toEqual({
+      primary: "anthropic/claude-opus-4-7",
+      fallbacks: ["anthropic/claude-sonnet-4-6"],
+    });
+    expect(res.config.agents?.defaults?.embeddedHarness).toEqual({ runtime: "claude-cli" });
+    expect(res.config.agents?.defaults?.models).toEqual({
+      "anthropic/claude-opus-4-7": { alias: "Anthropic Opus" },
+    });
   });
 
   it("keeps canonical OpenAI model entries ahead of migrated Codex aliases", () => {
