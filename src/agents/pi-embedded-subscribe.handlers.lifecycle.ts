@@ -221,14 +221,13 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
   // immediately on `agent_end`, which reaches `server-chat.ts` and
   // broadcasts `state: "final"` with the full streamed text **before**
   // the hook can intervene.
-  const shouldDefer =
-    !isError && ctx.hookRunner?.hasHooks("llm_output") === true;
+  const shouldDefer = !isError && ctx.hookRunner?.hasHooks("llm_output") === true;
 
   const emitOrDefer = () => {
     if (shouldDefer) {
       ctx.state.deferredTerminalLifecycle = {
         emit: () => emitLifecycleTerminalOnce(),
-        emitError: (error: string) => {
+        emitError: (error: string, errorKind: "hook_block" = "hook_block") => {
           if (lifecycleTerminalEmitted) {
             return;
           }
@@ -244,7 +243,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
             data: {
               phase: "error",
               error,
-              errorKind: "hook_block",
+              errorKind,
               hookOverride: true,
               ...(livenessState ? { livenessState: "blocked" } : {}),
               endedAt: Date.now(),
@@ -255,7 +254,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
             data: {
               phase: "error",
               error,
-              errorKind: "hook_block",
+              errorKind,
               hookOverride: true,
               ...(livenessState ? { livenessState: "blocked" } : {}),
             },
