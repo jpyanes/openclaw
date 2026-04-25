@@ -36,6 +36,37 @@ async function ensureSessionHeader(params: {
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+async function readLatestTranscriptMessageId(sessionFile: string): Promise<string | null> {
+  if (!fs.existsSync(sessionFile)) {
+    return null;
+  }
+  const lines = (await fs.promises.readFile(sessionFile, "utf-8")).split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (!line) {
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (
+        isRecord(parsed) &&
+        parsed.type === "message" &&
+        typeof parsed.id === "string" &&
+        parsed.id.length > 0
+      ) {
+        return parsed.id;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export type SessionTranscriptAppendResult =
   | { ok: true; sessionFile: string; messageId: string }
   | { ok: false; reason: string };
@@ -308,10 +339,11 @@ export async function appendBlockedUserMessageToSessionTranscript(params: {
   // line. The JSONL format is stable: one JSON object per line.
   const messageId = `blocked-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const nowMs = Date.now();
+  const parentId = await readLatestTranscriptMessageId(sessionFile);
   const jsonlEntry: Record<string, unknown> = {
     type: "message",
     id: messageId,
-    parentId: null,
+    parentId,
     timestamp: new Date(nowMs).toISOString(),
     ...(explicitIdempotencyKey ? { idempotencyKey: explicitIdempotencyKey } : {}),
     message: {

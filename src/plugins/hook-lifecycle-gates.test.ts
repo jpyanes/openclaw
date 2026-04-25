@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GlobalHookRunnerRegistry } from "./hook-registry.types.js";
 import type { PluginHookRegistration, PluginHookAgentContext } from "./hook-types.js";
 import { createHookRunner } from "./hooks.js";
@@ -275,7 +275,11 @@ describe("before_agent_run ask outcome", () => {
 });
 
 describe("llm_output ask outcome", () => {
-  it("returns ask when handler returns ask", async () => {
+  it("ignores ask when handler returns ask because llm_output cannot pause safely", async () => {
+    const logger = {
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
     const registry = makeRegistry([
       {
         pluginId: "test",
@@ -289,7 +293,7 @@ describe("llm_output ask outcome", () => {
         source: "test",
       },
     ]);
-    const runner = createHookRunner(registry);
+    const runner = createHookRunner(registry, { logger });
     const result = await runner.runLlmOutput(
       {
         runId: "r1",
@@ -300,11 +304,13 @@ describe("llm_output ask outcome", () => {
       },
       ctx,
     );
-    expect(result?.decision.outcome).toBe("ask");
-    expect(result?.pluginId).toBe("test");
+    expect(result).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[hooks] llm_output handler from test returned ask, but llm_output cannot pause safely; ignoring",
+    );
   });
 
-  it("ask does NOT short-circuit for llm_output — next handler still runs", async () => {
+  it("ask does NOT short-circuit for llm_output and no-ops when no later block exists", async () => {
     let secondHandlerCalled = false;
     const registry = makeRegistry([
       {
@@ -331,7 +337,7 @@ describe("llm_output ask outcome", () => {
       },
     ]);
     const runner = createHookRunner(registry);
-    await runner.runLlmOutput(
+    const result = await runner.runLlmOutput(
       {
         runId: "r1",
         sessionId: "s1",
@@ -341,6 +347,8 @@ describe("llm_output ask outcome", () => {
       },
       ctx,
     );
+    expect(result?.decision.outcome).toBe("pass");
+    expect(result?.pluginId).toBe("plugin-b");
     expect(secondHandlerCalled).toBe(true);
   });
 

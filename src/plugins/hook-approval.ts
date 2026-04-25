@@ -1,21 +1,45 @@
 /**
- * Hook Approval — human-in-the-loop approval for gate hooks.
+ * Shared plugin approval client for human-in-the-loop authorization hooks.
  *
- * Reuses the existing `plugin.approval.*` gateway RPC infrastructure
- * that powers `before_tool_call` → `requireApproval`.
- *
- * Gate hooks only support `allow-once` and `deny` (no `allow-always`
- * since prompts and outputs are freeform with no stable matching key).
+ * Reuses the existing `plugin.approval.*` gateway RPC infrastructure that
+ * powers `before_tool_call.requireApproval` and lifecycle gate `ask`.
  */
 
 import { callGatewayTool } from "../agents/tools/gateway.js";
 import type { HookDecisionAsk } from "./hook-decision-types.js";
+import { PluginApprovalResolutions, type PluginApprovalResolution } from "./hook-types.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type HookApprovalResult = "allow-once" | "deny" | "timeout" | "cancelled";
+
+export type PluginApprovalClientFailure = "missing-id" | "no-route" | "aborted" | "gateway-error";
+
+export type PluginApprovalClientResult = {
+  decision: PluginApprovalResolution;
+  id?: string;
+  failure?: PluginApprovalClientFailure;
+  error?: unknown;
+};
+
+export type RequestPluginApprovalParams = {
+  pluginId?: string;
+  title: string;
+  description: string;
+  severity?: "info" | "warning" | "critical";
+  timeoutMs?: number;
+  toolName?: string;
+  toolCallId?: string;
+  runId?: string;
+  sessionKey?: string;
+  agentId?: string;
+  channelId?: string;
+  signal?: AbortSignal;
+  log?: { warn: (msg: string) => void };
+  logLabel?: string;
+};
 
 export type HookApprovalParams = {
   /** Which hook point is requesting approval. */
@@ -52,25 +76,60 @@ export type HookApprovalParams = {
  * `decision.timeoutBehavior`.
  */
 export async function requestHookApproval(params: HookApprovalParams): Promise<HookApprovalResult> {
-  const { decision, hookPoint, signal, log } = params;
-  const timeoutMs = decision.timeoutMs ?? 120_000;
+  const result = await requestPluginApproval({
+    pluginId: params.pluginId ?? `hook:${params.hookPoint}`,
+    title: params.decision.title,
+    description: params.decision.description,
+    severity: params.decision.severity ?? "warning",
+    timeoutMs: params.decision.timeoutMs,
+    runId: params.runId,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    channelId: params.channelId,
+    signal: params.signal,
+    log: params.log,
+    logLabel: params.hookPoint,
+  });
+
+  return result.decision === PluginApprovalResolutions.ALLOW_ALWAYS
+    ? PluginApprovalResolutions.ALLOW_ONCE
+    : result.decision;
+}
+
+export async function requestPluginApproval(
+  params: RequestPluginApprovalParams,
+): Promise<PluginApprovalClientResult> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const label = params.logLabel ?? params.pluginId ?? "plugin approval";
+
+  if (params.signal?.aborted) {
+    params.log?.warn?.(`plugin approval cancelled before request for ${label}`);
+    return {
+      decision: PluginApprovalResolutions.CANCELLED,
+      failure: "aborted",
+      error: params.signal.reason,
+    };
+  }
 
   try {
-    // Phase 1: Create the approval request
-    const requestResult: {
+    const requestResult = await callGatewayTool<{
       id?: string;
       status?: string;
       decision?: string | null;
-    } = await callGatewayTool(
+    }>(
       "plugin.approval.request",
-      // Buffer beyond the approval timeout so the gateway can clean up
-      // and respond before the client-side RPC timeout fires.
-      { timeoutMs: timeoutMs + 10_000 },
+      { timeoutMs: timeoutMs + 10_000, deviceIdentity: null },
+      // Approval requests originate inside trusted agent/plugin runtime code.
+      // Avoid binding these internal RPCs to the UI device identity; otherwise a
+      // read-only control UI token turns the approval request itself into an
+      // impossible operator.approvals scope upgrade.
       {
-        pluginId: params.pluginId ?? `hook:${hookPoint}`,
-        title: decision.title,
-        description: decision.description,
-        severity: decision.severity ?? "warning",
+        pluginId: params.pluginId,
+        title: params.title,
+        description: params.description,
+        severity: params.severity,
+        toolName: params.toolName,
+        toolCallId: params.toolCallId,
         agentId: params.agentId,
         sessionKey: params.sessionKey,
         timeoutMs,
@@ -81,11 +140,10 @@ export async function requestHookApproval(params: HookApprovalParams): Promise<H
 
     const id = requestResult?.id;
     if (!id) {
-      log?.warn?.(`hook approval request failed (no id returned) for ${hookPoint}`);
-      return "cancelled";
+      params.log?.warn?.(`plugin approval request failed (no id returned) for ${label}`);
+      return { decision: PluginApprovalResolutions.CANCELLED, failure: "missing-id" };
     }
 
-    // Check for immediate decision (e.g. no approval route available)
     const hasImmediateDecision = Object.prototype.hasOwnProperty.call(
       requestResult ?? {},
       "decision",
@@ -96,39 +154,36 @@ export async function requestHookApproval(params: HookApprovalParams): Promise<H
     if (hasImmediateDecision) {
       rawDecision = requestResult.decision;
       if (rawDecision === null) {
-        // No approval route available
-        log?.warn?.(`hook approval unavailable (no approval route) for ${hookPoint}`);
-        return "cancelled";
+        params.log?.warn?.(`plugin approval unavailable (no approval route) for ${label}`);
+        return { decision: PluginApprovalResolutions.CANCELLED, id, failure: "no-route" };
       }
     } else {
-      // Phase 2: Wait for the decision
-      const waitPromise: Promise<{
+      const waitPromise = callGatewayTool<{
         id?: string;
         decision?: string | null;
-      }> = callGatewayTool(
+      }>(
         "plugin.approval.waitDecision",
-        { timeoutMs: timeoutMs + 10_000 },
+        { timeoutMs: timeoutMs + 10_000, deviceIdentity: null },
         { id },
       );
 
       let waitResult: { id?: string; decision?: string | null } | undefined;
 
-      if (signal) {
-        // Race the wait against the abort signal
+      if (params.signal) {
         let onAbort: (() => void) | undefined;
         const abortPromise = new Promise<never>((_, reject) => {
-          if (signal.aborted) {
-            reject(signal.reason);
+          if (params.signal!.aborted) {
+            reject(params.signal!.reason);
             return;
           }
-          onAbort = () => reject(signal.reason);
-          signal.addEventListener("abort", onAbort, { once: true });
+          onAbort = () => reject(params.signal!.reason);
+          params.signal!.addEventListener("abort", onAbort, { once: true });
         });
         try {
           waitResult = await Promise.race([waitPromise, abortPromise]);
         } finally {
           if (onAbort) {
-            signal.removeEventListener("abort", onAbort);
+            params.signal.removeEventListener("abort", onAbort);
           }
         }
       } else {
@@ -138,16 +193,16 @@ export async function requestHookApproval(params: HookApprovalParams): Promise<H
       rawDecision = waitResult?.decision;
     }
 
-    return normalizeDecision(rawDecision);
+    return { decision: normalizeDecision(rawDecision), id };
   } catch (err) {
-    if (isAbortCancellation(err, signal)) {
-      log?.warn?.(`hook approval cancelled by run abort for ${hookPoint}: ${String(err)}`);
-      return "cancelled";
+    if (isAbortCancellation(err, params.signal)) {
+      params.log?.warn?.(`plugin approval cancelled by run abort for ${label}: ${String(err)}`);
+      return { decision: PluginApprovalResolutions.CANCELLED, failure: "aborted", error: err };
     }
-    log?.warn?.(
-      `hook approval gateway request failed for ${hookPoint}, treating as cancelled: ${String(err)}`,
+    params.log?.warn?.(
+      `plugin approval gateway request failed for ${label}, treating as cancelled: ${String(err)}`,
     );
-    return "cancelled";
+    return { decision: PluginApprovalResolutions.CANCELLED, failure: "gateway-error", error: err };
   }
 }
 
@@ -155,18 +210,15 @@ export async function requestHookApproval(params: HookApprovalParams): Promise<H
 // Helpers
 // ---------------------------------------------------------------------------
 
-function normalizeDecision(raw: string | null | undefined): HookApprovalResult {
-  if (raw === "allow-once") {
-    return "allow-once";
+function normalizeDecision(raw: string | null | undefined): PluginApprovalResolution {
+  if (
+    raw === PluginApprovalResolutions.ALLOW_ONCE ||
+    raw === PluginApprovalResolutions.ALLOW_ALWAYS ||
+    raw === PluginApprovalResolutions.DENY
+  ) {
+    return raw;
   }
-  if (raw === "deny") {
-    return "deny";
-  }
-  // Gate hooks don't support allow-always — treat as allow-once
-  if (raw === "allow-always") {
-    return "allow-once";
-  }
-  return "timeout";
+  return PluginApprovalResolutions.TIMEOUT;
 }
 
 function isAbortCancellation(err: unknown, signal?: AbortSignal): boolean {
@@ -176,7 +228,7 @@ function isAbortCancellation(err: unknown, signal?: AbortSignal): boolean {
   if (err === signal.reason) {
     return true;
   }
-  if (err instanceof DOMException && err.name === "AbortError") {
+  if (err instanceof Error && err.name === "AbortError") {
     return true;
   }
   return false;

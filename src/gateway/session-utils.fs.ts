@@ -102,56 +102,114 @@ export function readSessionMessages(
     return [];
   }
 
+  const parsedEntries: unknown[] = [];
   const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/);
-  const messages: unknown[] = [];
-  let messageSeq = 0;
   for (const line of lines) {
     if (!line.trim()) {
       continue;
     }
     try {
-      const parsed = JSON.parse(line);
-      if (parsed?.message) {
-        messageSeq += 1;
-        // Forward the `originalBlockedContent` sidecar (set by
-        // appendBlockedUserMessageToSessionTranscript when a hook blocks a
-        // user input) so the SPA can render the original to the human
-        // while the agent transcript only ever contains the redacted stub.
-        const originalBlocked =
-          parsed.originalBlockedContent &&
-          typeof parsed.originalBlockedContent === "object" &&
-          !Array.isArray(parsed.originalBlockedContent)
-            ? (parsed.originalBlockedContent as Record<string, unknown>)
-            : undefined;
-        messages.push(
-          attachOpenClawTranscriptMeta(parsed.message, {
-            ...(typeof parsed.id === "string" ? { id: parsed.id } : {}),
-            seq: messageSeq,
-            ...(originalBlocked ? { originalBlockedContent: originalBlocked } : {}),
-          }),
-        );
-        continue;
-      }
-
-      // Compaction entries are not "message" records, but they're useful context for debugging.
-      // Emit a lightweight synthetic message that the Web UI can render as a divider.
-      if (parsed?.type === "compaction") {
-        const ts = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Number.NaN;
-        const timestamp = Number.isFinite(ts) ? ts : Date.now();
-        messageSeq += 1;
-        messages.push({
-          role: "system",
-          content: [{ type: "text", text: "Compaction" }],
-          timestamp,
-          __openclaw: {
-            kind: "compaction",
-            id: typeof parsed.id === "string" ? parsed.id : undefined,
-            seq: messageSeq,
-          },
-        });
-      }
+      parsedEntries.push(JSON.parse(line));
     } catch {
       // ignore bad lines
+    }
+  }
+
+  const hasTreeMessages = parsedEntries.some(
+    (entry) =>
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      typeof (entry as { id?: unknown }).id === "string" &&
+      "parentId" in entry &&
+      (entry as { message?: unknown }).message,
+  );
+  let activeEntryIds: Set<string> | undefined;
+  if (hasTreeMessages) {
+    const entriesById = new Map<string, unknown>();
+    for (const entry of parsedEntries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const id = (entry as { id?: unknown }).id;
+      if (typeof id === "string" && id.length > 0) {
+        entriesById.set(id, entry);
+      }
+    }
+    const leaf = [...entriesById.keys()].at(-1);
+    if (leaf) {
+      activeEntryIds = new Set<string>();
+      let next: string | undefined = leaf;
+      while (next && !activeEntryIds.has(next)) {
+        activeEntryIds.add(next);
+        const entry = entriesById.get(next);
+        const parentId =
+          entry && typeof entry === "object" && !Array.isArray(entry)
+            ? (entry as { parentId?: unknown }).parentId
+            : undefined;
+        next = typeof parentId === "string" && parentId.length > 0 ? parentId : undefined;
+      }
+    }
+  }
+
+  const messages: unknown[] = [];
+  let messageSeq = 0;
+  for (const parsed of parsedEntries) {
+    if (activeEntryIds) {
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        continue;
+      }
+      const id = (parsed as { id?: unknown }).id;
+      if (typeof id !== "string" || !activeEntryIds.has(id)) {
+        continue;
+      }
+    }
+    if ((parsed as { message?: unknown })?.message) {
+      messageSeq += 1;
+      // Forward the `originalBlockedContent` sidecar (set by
+      // appendBlockedUserMessageToSessionTranscript when a hook blocks a
+      // user input) so the SPA can render the original to the human
+      // while the agent transcript only ever contains the redacted stub.
+      const originalBlocked =
+        (parsed as { originalBlockedContent?: unknown }).originalBlockedContent &&
+        typeof (parsed as { originalBlockedContent?: unknown }).originalBlockedContent ===
+          "object" &&
+        !Array.isArray((parsed as { originalBlockedContent?: unknown }).originalBlockedContent)
+          ? ((parsed as { originalBlockedContent: Record<string, unknown> })
+              .originalBlockedContent as Record<string, unknown>)
+          : undefined;
+      messages.push(
+        attachOpenClawTranscriptMeta((parsed as { message: unknown }).message, {
+          ...(typeof (parsed as { id?: unknown }).id === "string"
+            ? { id: (parsed as { id: string }).id }
+            : {}),
+          seq: messageSeq,
+          ...(originalBlocked ? { originalBlockedContent: originalBlocked } : {}),
+        }),
+      );
+      continue;
+    }
+
+    // Compaction entries are not "message" records, but they're useful context for debugging.
+    // Emit a lightweight synthetic message that the Web UI can render as a divider.
+    if ((parsed as { type?: unknown })?.type === "compaction") {
+      const timestampRaw = (parsed as { timestamp?: unknown }).timestamp;
+      const ts = typeof timestampRaw === "string" ? Date.parse(timestampRaw) : Number.NaN;
+      const timestamp = Number.isFinite(ts) ? ts : Date.now();
+      messageSeq += 1;
+      messages.push({
+        role: "system",
+        content: [{ type: "text", text: "Compaction" }],
+        timestamp,
+        __openclaw: {
+          kind: "compaction",
+          id:
+            typeof (parsed as { id?: unknown }).id === "string"
+              ? (parsed as { id: string }).id
+              : undefined,
+          seq: messageSeq,
+        },
+      });
     }
   }
   return messages;

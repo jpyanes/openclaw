@@ -3443,22 +3443,11 @@ export async function runEmbeddedAttempt(
               llmOutputRetryRequested = false;
             }
           }
-          // NOTE: `llm_output` ASK is intentionally not handled here.
-          // The post-prompt() ASK path was removed because it cannot
-          // actually pause the SDK's loop — by the time approval was
-          // requested, the agent had already completed all tool calls
-          // and the user-visible UX was a confusing "review the past"
-          // dialog. See `docs/refactor/hook-output-gating-limitations.md`
-          // for the architectural reason and the path forward.
-          // Plugins returning `outcome: "ask"` from `llm_output` will
-          // now be silently ignored at this seam (with a debug warning
-          // logged). To gate LLM output today, use `outcome: "block"`
-          // (with optional `retry: true`) which works correctly.
-          else if (llmOutputDecision?.outcome === "ask") {
-            log.warn(
-              `llm_output hook requested ASK (${llmOutputPluginId}) but ASK is not enforceable for tool-using turns; see docs/refactor/hook-output-gating-limitations.md. Treating as no-op.`,
-            );
-          }
+          // NOTE: `llm_output` ASK is intentionally filtered in the hook
+          // runner. The post-prompt() ASK path cannot pause the SDK's loop:
+          // by the time approval would be requested, the agent has already
+          // completed tool calls. To gate LLM output today, use block
+          // (with optional retry).
 
           // The lifecycle terminal event was deferred while the hook ran.
           // Resolve it now: if the hook blocked or denied the response,
@@ -3565,34 +3554,7 @@ export async function runEmbeddedAttempt(
         const replayMetadata = replayMetadataFromState(
           observeReplayMetadata(getReplayState(), observedReplayMetadata),
         );
-
-      const observedReplayMetadata = buildAttemptReplayMetadata({
-        toolMetas: toolMetasNormalized,
-        didSendViaMessagingTool: didSendViaMessagingTool(),
-        successfulCronAdds: getSuccessfulCronAdds(),
-      });
-      const replayMetadata = replayMetadataFromState(
-        observeReplayMetadata(getReplayState(), observedReplayMetadata),
-      );
-      trajectoryRecorder?.recordEvent("model.completed", {
-        aborted,
-        externalAbort,
-        timedOut,
-        idleTimedOut,
-        timedOutDuringCompaction,
-        promptError: promptError ? formatErrorMessage(promptError) : undefined,
-        promptErrorSource,
-        usage: attemptUsage,
-        promptCache,
-        compactionCount: getCompactionCount(),
-        assistantTexts,
-        finalPromptText,
-        messagesSnapshot,
-      });
-      trajectoryRecorder?.recordEvent(
-        "trace.artifacts",
-        buildTrajectoryArtifacts({
-          status: promptError ? "error" : aborted || timedOut ? "interrupted" : "success",
+        trajectoryRecorder?.recordEvent("model.completed", {
           aborted,
           externalAbort,
           timedOut,
@@ -3605,71 +3567,89 @@ export async function runEmbeddedAttempt(
           compactionCount: getCompactionCount(),
           assistantTexts,
           finalPromptText,
+          messagesSnapshot,
+        });
+        trajectoryRecorder?.recordEvent(
+          "trace.artifacts",
+          buildTrajectoryArtifacts({
+            status: promptError ? "error" : aborted || timedOut ? "interrupted" : "success",
+            aborted,
+            externalAbort,
+            timedOut,
+            idleTimedOut,
+            timedOutDuringCompaction,
+            promptError: promptError ? formatErrorMessage(promptError) : undefined,
+            promptErrorSource,
+            usage: attemptUsage,
+            promptCache,
+            compactionCount: getCompactionCount(),
+            assistantTexts,
+            finalPromptText,
+            itemLifecycle: getItemLifecycle(),
+            toolMetas: toolMetasNormalized,
+            didSendViaMessagingTool: didSendViaMessagingTool(),
+            successfulCronAdds: getSuccessfulCronAdds(),
+            messagingToolSentTexts: getMessagingToolSentTexts(),
+            messagingToolSentMediaUrls: getMessagingToolSentMediaUrls(),
+            messagingToolSentTargets: getMessagingToolSentTargets(),
+            lastToolError: getLastToolError?.(),
+          }),
+        );
+        trajectoryRecorder?.recordEvent("session.ended", {
+          status: promptError ? "error" : aborted || timedOut ? "interrupted" : "success",
+          aborted,
+          externalAbort,
+          timedOut,
+          idleTimedOut,
+          timedOutDuringCompaction,
+          promptError: promptError ? formatErrorMessage(promptError) : undefined,
+        });
+        trajectoryEndRecorded = true;
+
+        // Cleanup async llm_output handlers before returning
+        cleanupAsyncLlmOutput?.();
+
+        return {
+          replayMetadata,
           itemLifecycle: getItemLifecycle(),
+          setTerminalLifecycleMeta,
+          aborted,
+          externalAbort,
+          timedOut,
+          idleTimedOut,
+          timedOutDuringCompaction,
+          promptError,
+          promptErrorSource,
+          preflightRecovery,
+          sessionIdUsed,
+          diagnosticTrace,
+          bootstrapPromptWarningSignaturesSeen: bootstrapPromptWarning.warningSignaturesSeen,
+          bootstrapPromptWarningSignature: bootstrapPromptWarning.signature,
+          systemPromptReport,
+          finalPromptText,
+          messagesSnapshot,
+          assistantTexts,
           toolMetas: toolMetasNormalized,
+          lastAssistant,
+          currentAttemptAssistant,
+          lastToolError: getLastToolError?.(),
           didSendViaMessagingTool: didSendViaMessagingTool(),
-          successfulCronAdds: getSuccessfulCronAdds(),
           messagingToolSentTexts: getMessagingToolSentTexts(),
           messagingToolSentMediaUrls: getMessagingToolSentMediaUrls(),
           messagingToolSentTargets: getMessagingToolSentTargets(),
-          lastToolError: getLastToolError?.(),
-        }),
-      );
-      trajectoryRecorder?.recordEvent("session.ended", {
-        status: promptError ? "error" : aborted || timedOut ? "interrupted" : "success",
-        aborted,
-        externalAbort,
-        timedOut,
-        idleTimedOut,
-        timedOutDuringCompaction,
-        promptError: promptError ? formatErrorMessage(promptError) : undefined,
-      });
-      trajectoryEndRecorded = true;
-
-      // Cleanup async llm_output handlers before returning
-      cleanupAsyncLlmOutput?.();
-
-      return {
-        replayMetadata,
-        itemLifecycle: getItemLifecycle(),
-        setTerminalLifecycleMeta,
-        aborted,
-        externalAbort,
-        timedOut,
-        idleTimedOut,
-        timedOutDuringCompaction,
-        promptError,
-        promptErrorSource,
-        preflightRecovery,
-        sessionIdUsed,
-        diagnosticTrace,
-        bootstrapPromptWarningSignaturesSeen: bootstrapPromptWarning.warningSignaturesSeen,
-        bootstrapPromptWarningSignature: bootstrapPromptWarning.signature,
-        systemPromptReport,
-        finalPromptText,
-        messagesSnapshot,
-        assistantTexts,
-        toolMetas: toolMetasNormalized,
-        lastAssistant,
-        currentAttemptAssistant,
-        lastToolError: getLastToolError?.(),
-        didSendViaMessagingTool: didSendViaMessagingTool(),
-        messagingToolSentTexts: getMessagingToolSentTexts(),
-        messagingToolSentMediaUrls: getMessagingToolSentMediaUrls(),
-        messagingToolSentTargets: getMessagingToolSentTargets(),
-        successfulCronAdds: getSuccessfulCronAdds(),
-        cloudCodeAssistFormatError: Boolean(
-          lastAssistant?.errorMessage && isCloudCodeAssistFormatError(lastAssistant.errorMessage),
-        ),
-        attemptUsage,
-        promptCache,
-        compactionCount: getCompactionCount(),
-        // Client tool call detected (OpenResponses hosted tools)
-        clientToolCall: clientToolCallDetected ?? undefined,
-        yieldDetected: yieldDetected || undefined,
-        llmOutputRetryRequested,
-        llmOutputRetryCount,
-      };
+          successfulCronAdds: getSuccessfulCronAdds(),
+          cloudCodeAssistFormatError: Boolean(
+            lastAssistant?.errorMessage && isCloudCodeAssistFormatError(lastAssistant.errorMessage),
+          ),
+          attemptUsage,
+          promptCache,
+          compactionCount: getCompactionCount(),
+          // Client tool call detected (OpenResponses hosted tools)
+          clientToolCall: clientToolCallDetected ?? undefined,
+          yieldDetected: yieldDetected || undefined,
+          llmOutputRetryRequested,
+          llmOutputRetryCount,
+        };
       } finally {
         // Safety net: if the llm_output hook deferred the lifecycle terminal
         // event but we're leaving without having resolved it (e.g. an

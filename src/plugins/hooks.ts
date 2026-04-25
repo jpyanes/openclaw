@@ -12,6 +12,8 @@ import {
   type HookDecision,
   type HookController,
   type GateHookResult,
+  type InputGateDecision,
+  type OutputGateDecision,
   isHookDecision,
   mergeHookDecisions,
 } from "./hook-decision-types.js";
@@ -627,27 +629,38 @@ export function createHookRunner(
   async function runLlmOutput(
     event: PluginHookLlmOutputEvent,
     ctx: PluginHookAgentContext,
-  ): Promise<GateHookResult | undefined> {
+  ): Promise<GateHookResult<OutputGateDecision> | undefined> {
     let winningPluginId: string | undefined;
-    const decision = await runModifyingHook<"llm_output", HookDecision>("llm_output", event, ctx, {
-      mergeResults: (_acc, next, reg) => {
-        if (!isHookDecision(next)) {
-          return _acc ?? next;
-        }
-        const merged = mergeHookDecisions(_acc, next);
-        if (merged === next) {
-          winningPluginId = reg.pluginId;
-        }
-        return merged;
+    const decision = await runModifyingHook<"llm_output", HookDecision | undefined>(
+      "llm_output",
+      event,
+      ctx,
+      {
+        mergeResults: (_acc, next, reg): HookDecision | undefined => {
+          if (!isHookDecision(next)) {
+            return _acc ?? next;
+          }
+          if (next.outcome === "ask") {
+            logger?.warn?.(
+              `[hooks] llm_output handler from ${reg.pluginId} returned ask, but llm_output cannot pause safely; ignoring`,
+            );
+            return _acc;
+          }
+          const merged = mergeHookDecisions(_acc, next);
+          if (merged === next) {
+            winningPluginId = reg.pluginId;
+          }
+          return merged;
+        },
+        // Keep running past pass/ask so later handlers can still block.
+        shouldStop: (result) => result?.outcome === "block",
+        terminalLabel: "gate-decision",
       },
-      // ask does NOT short-circuit — keep running so other plugins can escalate to block
-      shouldStop: (result) => result.outcome === "block",
-      terminalLabel: "gate-decision",
-    });
+    );
     if (!decision) {
       return undefined;
     }
-    return { decision, pluginId: winningPluginId ?? "unknown" };
+    return { decision: decision as OutputGateDecision, pluginId: winningPluginId ?? "unknown" };
   }
 
   /**
@@ -825,7 +838,7 @@ export function createHookRunner(
   async function runBeforeAgentRun(
     event: PluginHookBeforeAgentRunEvent,
     ctx: PluginHookAgentContext,
-  ): Promise<GateHookResult | undefined> {
+  ): Promise<GateHookResult<InputGateDecision> | undefined> {
     let winningPluginId: string | undefined;
     const decision = await runModifyingHook<"before_agent_run", HookDecision>(
       "before_agent_run",
@@ -894,6 +907,17 @@ export function createHookRunner(
         terminalLabel: "block=true",
       },
     );
+  }
+
+  /**
+   * Run after_tool_call hook.
+   * Runs in parallel (fire-and-forget).
+   */
+  async function runAfterToolCall(
+    event: PluginHookAfterToolCallEvent,
+    ctx: PluginHookToolContext,
+  ): Promise<void> {
+    return runVoidHook("after_tool_call", event, ctx);
   }
 
   /**
@@ -1279,6 +1303,7 @@ export function createHookRunner(
     runMessageSent,
     // Tool hooks
     runBeforeToolCall,
+    runAfterToolCall,
     runToolResultPersist,
     // Message write hooks
     runBeforeMessageWrite,

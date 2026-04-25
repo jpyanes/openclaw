@@ -109,7 +109,7 @@ export type HookDecisionAsk = {
  * deprecated `userMessage` field as a fallback before defaulting.
  */
 export function resolveBlockMessage(decision: HookDecisionBlock): string {
-  return decision.message ?? decision.userMessage ?? decision.reason ?? DEFAULT_BLOCK_MESSAGE;
+  return decision.message ?? decision.userMessage ?? DEFAULT_BLOCK_MESSAGE;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,15 +153,15 @@ export function isHookDecision(value: unknown): value is HookDecision {
 export type InputGateDecision = HookDecisionPass | HookDecisionBlock | HookDecisionAsk;
 
 /** Outcomes valid for output gates (llm_output, after_tool_call). */
-export type OutputGateDecision = HookDecision;
+export type OutputGateDecision = HookDecisionPass | HookDecisionBlock;
 
 /**
  * A gate hook decision paired with the pluginId that produced it.
  * Returned by `runBeforeAgentRun` and `runLlmOutput` so callers can
  * attribute approval requests and audit entries to the originating plugin.
  */
-export type GateHookResult = {
-  decision: HookDecision;
+export type GateHookResult<TDecision extends HookDecision = HookDecision> = {
+  decision: TDecision;
   pluginId: string;
 };
 

@@ -13,6 +13,7 @@ import {
 } from "../infra/diagnostic-trace-context.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { requestPluginApproval } from "../plugins/hook-approval.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { copyPluginToolMeta } from "../plugins/tools.js";
 import { PluginApprovalResolutions, type PluginApprovalResolution } from "../plugins/types.js";
@@ -21,7 +22,6 @@ import { isPlainObject } from "../utils.js";
 import { copyChannelAgentToolMeta } from "./channel-tools.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
-import { callGatewayTool } from "./tools/gateway.js";
 
 export type HookContext = {
   agentId?: string;
@@ -68,19 +68,6 @@ function mergeParamsWithApprovalOverrides(
     return approvalParams;
   }
   return originalParams;
-}
-
-function isAbortSignalCancellation(err: unknown, signal?: AbortSignal): boolean {
-  if (!signal?.aborted) {
-    return false;
-  }
-  if (err === signal.reason) {
-    return true;
-  }
-  if (err instanceof Error && err.name === "AbortError") {
-    return true;
-  }
-  return false;
 }
 
 function unwrapErrorCause(err: unknown): unknown {
@@ -280,130 +267,68 @@ export async function runBeforeToolCallHook(args: {
           log.warn(`plugin onResolution callback failed: ${String(err)}`);
         }
       };
-      try {
-        const requestResult: {
-          id?: string;
-          status?: string;
-          decision?: string | null;
-        } = await callGatewayTool(
-          "plugin.approval.request",
-          // Buffer beyond the approval timeout so the gateway can clean up
-          // and respond before the client-side RPC timeout fires.
-          { timeoutMs: (approval.timeoutMs ?? 120_000) + 10_000 },
-          {
-            pluginId: approval.pluginId,
-            title: approval.title,
-            description: approval.description,
-            severity: approval.severity,
-            toolName,
-            toolCallId: args.toolCallId,
-            agentId: args.ctx?.agentId,
-            sessionKey: args.ctx?.sessionKey,
-            timeoutMs: approval.timeoutMs ?? 120_000,
-            twoPhase: true,
-          },
-          { expectFinal: false },
-        );
-        const id = requestResult?.id;
-        if (!id) {
-          safeOnResolution(PluginApprovalResolutions.CANCELLED);
+      const approvalResult = await requestPluginApproval({
+        pluginId: approval.pluginId,
+        title: approval.title,
+        description: approval.description,
+        severity: approval.severity,
+        timeoutMs: approval.timeoutMs,
+        toolName,
+        toolCallId: args.toolCallId,
+        agentId: args.ctx?.agentId,
+        sessionKey: args.ctx?.sessionKey,
+        channelId: args.ctx?.channelId,
+        signal: args.signal,
+        log,
+        logLabel: `before_tool_call:${toolName}`,
+      });
+      safeOnResolution(approvalResult.decision);
+
+      if (
+        approvalResult.decision === PluginApprovalResolutions.ALLOW_ONCE ||
+        approvalResult.decision === PluginApprovalResolutions.ALLOW_ALWAYS
+      ) {
+        return {
+          blocked: false,
+          params: mergeParamsWithApprovalOverrides(params, hookResult.params),
+        };
+      }
+      if (approvalResult.decision === PluginApprovalResolutions.DENY) {
+        return { blocked: true, reason: "Denied by user" };
+      }
+      if (approvalResult.decision === PluginApprovalResolutions.CANCELLED) {
+        if (approvalResult.failure === "missing-id") {
           return {
             blocked: true,
             reason: approval.description || "Plugin approval request failed",
           };
         }
-        const hasImmediateDecision = Object.prototype.hasOwnProperty.call(
-          requestResult ?? {},
-          "decision",
-        );
-        let decision: string | null | undefined;
-        if (hasImmediateDecision) {
-          decision = requestResult?.decision;
-          if (decision === null) {
-            safeOnResolution(PluginApprovalResolutions.CANCELLED);
-            return {
-              blocked: true,
-              reason: "Plugin approval unavailable (no approval route)",
-            };
-          }
-        } else {
-          // Wait for the decision, but abort early if the agent run is cancelled
-          // so the user isn't blocked for the full approval timeout.
-          const waitPromise: Promise<{
-            id?: string;
-            decision?: string | null;
-          }> = callGatewayTool(
-            "plugin.approval.waitDecision",
-            // Buffer beyond the approval timeout so the gateway can clean up
-            // and respond before the client-side RPC timeout fires.
-            { timeoutMs: (approval.timeoutMs ?? 120_000) + 10_000 },
-            { id },
-          );
-          let waitResult: { id?: string; decision?: string | null } | undefined;
-          if (args.signal) {
-            let onAbort: (() => void) | undefined;
-            const abortPromise = new Promise<never>((_, reject) => {
-              if (args.signal!.aborted) {
-                reject(args.signal!.reason);
-                return;
-              }
-              onAbort = () => reject(args.signal!.reason);
-              args.signal!.addEventListener("abort", onAbort, { once: true });
-            });
-            try {
-              waitResult = await Promise.race([waitPromise, abortPromise]);
-            } finally {
-              if (onAbort) {
-                args.signal.removeEventListener("abort", onAbort);
-              }
-            }
-          } else {
-            waitResult = await waitPromise;
-          }
-          decision = waitResult?.decision;
-        }
-        const resolution: PluginApprovalResolution =
-          decision === PluginApprovalResolutions.ALLOW_ONCE ||
-          decision === PluginApprovalResolutions.ALLOW_ALWAYS ||
-          decision === PluginApprovalResolutions.DENY
-            ? decision
-            : PluginApprovalResolutions.TIMEOUT;
-        safeOnResolution(resolution);
-        if (
-          decision === PluginApprovalResolutions.ALLOW_ONCE ||
-          decision === PluginApprovalResolutions.ALLOW_ALWAYS
-        ) {
+        if (approvalResult.failure === "no-route") {
           return {
-            blocked: false,
-            params: mergeParamsWithApprovalOverrides(params, hookResult.params),
+            blocked: true,
+            reason: "Plugin approval unavailable (no approval route)",
           };
         }
-        if (decision === PluginApprovalResolutions.DENY) {
-          return { blocked: true, reason: "Denied by user" };
-        }
-        const timeoutBehavior = approval.timeoutBehavior ?? "deny";
-        if (timeoutBehavior === "allow") {
-          return {
-            blocked: false,
-            params: mergeParamsWithApprovalOverrides(params, hookResult.params),
-          };
-        }
-        return { blocked: true, reason: "Approval timed out" };
-      } catch (err) {
-        safeOnResolution(PluginApprovalResolutions.CANCELLED);
-        if (isAbortSignalCancellation(err, args.signal)) {
-          log.warn(`plugin approval wait cancelled by run abort: ${String(err)}`);
+        if (approvalResult.failure === "aborted") {
           return {
             blocked: true,
             reason: "Approval cancelled (run aborted)",
           };
         }
-        log.warn(`plugin approval gateway request failed; blocking tool call: ${String(err)}`);
         return {
           blocked: true,
           reason: "Plugin approval required (gateway unavailable)",
         };
       }
+
+      const timeoutBehavior = approval.timeoutBehavior ?? "deny";
+      if (timeoutBehavior === "allow") {
+        return {
+          blocked: false,
+          params: mergeParamsWithApprovalOverrides(params, hookResult.params),
+        };
+      }
+      return { blocked: true, reason: "Approval timed out" };
     }
 
     if (hookResult?.params) {

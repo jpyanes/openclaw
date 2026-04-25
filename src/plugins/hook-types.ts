@@ -20,7 +20,12 @@ import type {
   PluginHookBeforePromptBuildEvent,
   PluginHookBeforePromptBuildResult,
 } from "./hook-before-agent-start.types.js";
-import type { HookDecision, InputGateDecision, HookController } from "./hook-decision-types.js";
+import type {
+  HookDecision,
+  InputGateDecision,
+  OutputGateDecision,
+  HookController,
+} from "./hook-decision-types.js";
 import type {
   PluginHookInboundClaimContext,
   PluginHookInboundClaimEvent,
@@ -85,8 +90,7 @@ export type PluginHookName =
   | "before_dispatch"
   | "reply_dispatch"
   | "before_install"
-  | "before_agent_run"
-;
+  | "before_agent_run";
 
 export const PLUGIN_HOOK_NAMES = [
   "before_model_resolve",
@@ -690,10 +694,6 @@ export type PluginHookBeforeAgentRunEvent = {
 /** Result type for before_agent_run. Returns HookDecision or void (= pass). */
 export type PluginHookBeforeAgentRunResult = InputGateDecision | void;
 
-
-
-
-
 export type PluginHookHandlerMap = {
   before_model_resolve: (
     event: PluginHookBeforeModelResolveEvent,
@@ -719,7 +719,7 @@ export type PluginHookHandlerMap = {
     event: PluginHookLlmOutputEvent,
     ctx: PluginHookAgentContext,
     controller?: HookController,
-  ) => Promise<HookDecision | void> | HookDecision | void;
+  ) => Promise<OutputGateDecision | void> | OutputGateDecision | void;
   agent_end: (event: PluginHookAgentEndEvent, ctx: PluginHookAgentContext) => Promise<void> | void;
   before_compaction: (
     event: PluginHookBeforeCompactionEvent,
