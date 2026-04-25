@@ -9,6 +9,10 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import {
+  appendAssistantMessageToSessionTranscript,
+  appendBlockedUserMessageToSessionTranscript,
+} from "../../../config/sessions/transcript.js";
 import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { emitDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
@@ -21,10 +25,12 @@ import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
+import { requestHookApproval } from "../../../plugins/hook-approval.js";
 import {
   DEFAULT_BLOCK_MAX_RETRIES,
   resolveBlockMessage,
 } from "../../../plugins/hook-decision-types.js";
+import { redactDuplicateUserMessage, redactMessages } from "../../../plugins/hook-redaction.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import {
   extractModelCompat,
@@ -2015,7 +2021,6 @@ export async function runEmbeddedAttempt(
             // block look like it failed.
             if (info.blockedAssistantText && info.blockedAssistantText.trim().length > 0) {
               try {
-                const { redactMessages } = await import("../../../plugins/hook-redaction.js");
                 await redactMessages(
                   params.sessionFile,
                   {
@@ -2043,8 +2048,6 @@ export async function runEmbeddedAttempt(
             // `chat.history` reload after `final` shows the policy notice
             // in the transcript instead of the streamed text.
             try {
-              const { appendAssistantMessageToSessionTranscript } =
-                await import("../../../config/sessions/transcript.js");
               await appendAssistantMessageToSessionTranscript({
                 agentId: sessionAgentId,
                 sessionKey: params.sessionKey ?? "",
@@ -2554,7 +2557,8 @@ export async function runEmbeddedAttempt(
                 prompt: effectivePrompt,
                 messages: activeSession.messages,
                 channelId: params.messageChannel ?? params.messageProvider ?? undefined,
-                // TODO: wire senderId/senderIsOwner from message context
+                senderId: params.senderId ?? undefined,
+                senderIsOwner: params.senderIsOwner,
               },
               {
                 runId: params.runId,
@@ -2587,8 +2591,6 @@ export async function runEmbeddedAttempt(
                 );
                 if (params.prompt) {
                   try {
-                    const { appendBlockedUserMessageToSessionTranscript } =
-                      await import("../../../config/sessions/transcript.js");
                     log.warn(
                       `before_agent_run block: calling appendBlockedUserMessageToSessionTranscript now`,
                     );
@@ -2623,7 +2625,6 @@ export async function runEmbeddedAttempt(
                 log.warn(
                   `before_agent_run hook requesting approval (${beforeRunPluginId}): ${beforeRunDecision.reason}`,
                 );
-                const { requestHookApproval } = await import("../../../plugins/hook-approval.js");
                 const approvalResult = await requestHookApproval({
                   hookPoint: "before_agent_run",
                   decision: beforeRunDecision,
@@ -2645,8 +2646,6 @@ export async function runEmbeddedAttempt(
                   // shows the original text but agents only ever see the deny notice.
                   if (params.prompt) {
                     try {
-                      const { appendBlockedUserMessageToSessionTranscript } =
-                        await import("../../../config/sessions/transcript.js");
                       await appendBlockedUserMessageToSessionTranscript({
                         agentId: sessionAgentId,
                         sessionKey: params.sessionKey ?? "",
@@ -2675,8 +2674,6 @@ export async function runEmbeddedAttempt(
                     const timeoutMsg = beforeRunDecision.denialMessage ?? "Approval timed out.";
                     if (params.prompt) {
                       try {
-                        const { appendBlockedUserMessageToSessionTranscript } =
-                          await import("../../../config/sessions/transcript.js");
                         await appendBlockedUserMessageToSessionTranscript({
                           agentId: sessionAgentId,
                           sessionKey: params.sessionKey ?? "",
@@ -2856,8 +2853,6 @@ export async function runEmbeddedAttempt(
               // immediately after via redactDuplicateUserMessage.
               await abortable(activeSession.prompt(effectivePrompt));
               try {
-                const { redactDuplicateUserMessage } =
-                  await import("../../../plugins/hook-redaction.js");
                 await redactDuplicateUserMessage(params.sessionFile, effectivePrompt);
               } catch {
                 // Best-effort cleanup; duplicate user is cosmetically
@@ -3325,7 +3320,6 @@ export async function runEmbeddedAttempt(
             // messages with an empty-string match.
             const scrubTarget = (assistantTexts[0] ?? "").trim();
             if (scrubTarget.length > 0) {
-              const { redactMessages } = await import("../../../plugins/hook-redaction.js");
               await redactMessages(
                 params.sessionFile,
                 {
@@ -3351,8 +3345,6 @@ export async function runEmbeddedAttempt(
               // text). Without this, `chat.history` returns only the user
               // message and the in-memory block bubble vanishes on reload.
               try {
-                const { appendAssistantMessageToSessionTranscript } =
-                  await import("../../../config/sessions/transcript.js");
                 await appendAssistantMessageToSessionTranscript({
                   agentId: hookAgentId,
                   sessionKey: params.sessionKey ?? "",
@@ -3536,7 +3528,6 @@ export async function runEmbeddedAttempt(
               // wiring into the channel delivery pipeline (deferred).
               // The persisted assistant message can be scrubbed immediately:
               if (decision.outcome === "block") {
-                const { redactMessages } = await import("../../../plugins/hook-redaction.js");
                 await redactMessages(
                   params.sessionFile,
                   { runId: params.runId },
