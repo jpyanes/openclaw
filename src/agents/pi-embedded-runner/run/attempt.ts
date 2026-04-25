@@ -21,6 +21,10 @@ import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
+import {
+  DEFAULT_BLOCK_MAX_RETRIES,
+  resolveBlockMessage,
+} from "../../../plugins/hook-decision-types.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import {
   extractModelCompat,
@@ -2569,8 +2573,6 @@ export async function runEmbeddedAttempt(
                 log.warn(
                   `before_agent_run hook blocked by ${beforeRunPluginId}: ${beforeRunDecision.reason}`,
                 );
-                const { resolveBlockMessage } =
-                  await import("../../../plugins/hook-decision-types.js");
                 const blockReplacementMsg = resolveBlockMessage(beforeRunDecision);
                 // Persist the user's original message into the JSONL with
                 // its agent-visible content REPLACED by the policy notice
@@ -3284,8 +3286,6 @@ export async function runEmbeddedAttempt(
               : ((promptError as Error)?.message ?? promptError ?? blockMsg);
           resolveTerminalLifecycle({ error: errMsg });
         } else if (hookRunner?.hasHooks("llm_output")) {
-          const { resolveBlockMessage, DEFAULT_BLOCK_MAX_RETRIES } =
-            await import("../../../plugins/hook-decision-types.js");
           const llmOutputResult = await hookRunner.runLlmOutput(
             {
               runId: params.runId,
