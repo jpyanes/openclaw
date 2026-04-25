@@ -3,7 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerWikiCli, runWikiChatGptImport, runWikiChatGptRollback } from "./cli.js";
+import {
+  registerWikiCli,
+  runWikiBridgeImport,
+  runWikiChatGptImport,
+  runWikiChatGptRollback,
+  runWikiDoctor,
+  runWikiStatus,
+} from "./cli.js";
 import type { MemoryWikiPluginConfig } from "./config.js";
 import { parseWikiMarkdown, renderWikiMarkdown } from "./markdown.js";
 import { createMemoryWikiTestHarness } from "./test-helpers.js";
@@ -86,6 +93,19 @@ describe("memory-wiki cli", () => {
       "utf8",
     );
     return exportDir;
+  }
+
+  function createStdoutCapture() {
+    const writes: string[] = [];
+    return {
+      writes,
+      stdout: {
+        write: ((chunk: string | Uint8Array) => {
+          writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+          return true;
+        }) as NodeJS.WriteStream["write"],
+      },
+    };
   }
 
   it("registers apply synthesis and writes a synthesis page", async () => {
@@ -178,21 +198,113 @@ cli note
     expect(parsed.body).toContain("cli note");
   });
 
-  it("runs wiki doctor and sets a non-zero exit code when warnings exist", async () => {
-    const { rootDir, config } = await createCliVault({
+  it("loads wiki status through the gateway so bridge artifacts match runtime state", async () => {
+    const { config } = await createCliVault({
       config: {
         vaultMode: "bridge",
-        bridge: { enabled: false },
+        bridge: {
+          enabled: true,
+          readMemoryArtifacts: true,
+        },
+      },
+      initialize: true,
+    });
+    const callGateway = vi.fn(async () => ({
+      vaultMode: "bridge",
+      bridgePublicArtifactCount: 155,
+      warnings: [],
+    }));
+    const { stdout, writes } = createStdoutCapture();
+
+    const status = await runWikiStatus({
+      config,
+      gatewayOpts: { url: "ws://127.0.0.1:18789", token: "tok" },
+      json: true,
+      stdout,
+      callGateway,
+    });
+
+    expect(callGateway).toHaveBeenCalledWith(
+      "wiki.status",
+      expect.objectContaining({ url: "ws://127.0.0.1:18789", token: "tok", json: true }),
+      {},
+    );
+    expect(status.bridgePublicArtifactCount).toBe(155);
+    expect(writes.join("")).toContain('"bridgePublicArtifactCount": 155');
+  });
+
+  it("runs wiki doctor through the gateway and preserves non-zero exit behavior", async () => {
+    const { config } = await createCliVault({
+      config: {
+        vaultMode: "bridge",
+        bridge: {
+          enabled: true,
+          readMemoryArtifacts: true,
+        },
       },
     });
-    const program = new Command();
-    program.name("test");
-    registerWikiCli(program, config);
-    await fs.rm(rootDir, { recursive: true, force: true });
+    const callGateway = vi.fn(async () => ({
+      healthy: false,
+      warningCount: 1,
+      status: {
+        vaultMode: "bridge",
+      },
+      fixes: [{ code: "bridge-disabled", message: "Enable bridge mode." }],
+    }));
+    const { stdout, writes } = createStdoutCapture();
 
-    await program.parseAsync(["wiki", "doctor", "--json"], { from: "user" });
+    const report = await runWikiDoctor({
+      config,
+      json: true,
+      stdout,
+      callGateway,
+    });
 
+    expect(callGateway).toHaveBeenCalledWith("wiki.doctor", { json: true }, {});
+    expect(report.healthy).toBe(false);
     expect(process.exitCode).toBe(1);
+    expect(writes.join("")).toContain('"warningCount": 1');
+  });
+
+  it("runs wiki bridge import through the gateway to avoid CLI-only empty artifacts", async () => {
+    const { config } = await createCliVault({
+      config: {
+        vaultMode: "bridge",
+        bridge: {
+          enabled: true,
+          readMemoryArtifacts: true,
+        },
+      },
+      initialize: true,
+    });
+    const callGateway = vi.fn(async () => ({
+      importedCount: 3,
+      updatedCount: 1,
+      skippedCount: 2,
+      removedCount: 0,
+      artifactCount: 6,
+      workspaces: 2,
+      pagePaths: [],
+      indexesRefreshed: true,
+      indexUpdatedFiles: ["sources/a.md", "sources/b.md"],
+      indexRefreshReason: "synced" as const,
+    }));
+    const { stdout, writes } = createStdoutCapture();
+
+    const result = await runWikiBridgeImport({
+      config,
+      gatewayOpts: { url: "ws://127.0.0.1:18789", token: "tok" },
+      stdout,
+      callGateway,
+    });
+
+    expect(callGateway).toHaveBeenCalledWith(
+      "wiki.bridge.import",
+      expect.objectContaining({ url: "ws://127.0.0.1:18789", token: "tok" }),
+      {},
+    );
+    expect(result.artifactCount).toBe(6);
+    expect(writes.join("")).toContain("Bridge import synced 6 artifacts");
   });
 
   it("imports ChatGPT exports with dry-run, apply, and rollback", async () => {

@@ -68,6 +68,10 @@ Inspect current vault mode, health, and Obsidian CLI availability.
 Use this first when you are unsure whether the vault is initialized, bridge mode
 is healthy, or Obsidian integration is available.
 
+This command calls the Gateway so bridge mode reports the same exported memory
+artifacts that runtime wiki tools see. Start the Gateway first, or pass
+`--url` and `--token` when checking a remote Gateway.
+
 ### `wiki doctor`
 
 Run wiki health checks and surface configuration or vault problems.
@@ -77,6 +81,9 @@ Typical issues include:
 - bridge mode enabled without public memory artifacts
 - invalid or missing vault layout
 - missing external Obsidian CLI when Obsidian mode is expected
+
+Like `wiki status`, this command calls the Gateway in order to inspect the
+active runtime memory plugin state.
 
 ### `wiki init`
 
@@ -167,6 +174,10 @@ source pages.
 
 Use this in `bridge` mode when you want the latest exported memory artifacts
 pulled into the wiki vault.
+
+The import runs through the Gateway process. This keeps the CLI from seeing an
+empty standalone plugin registry and accidentally treating bridge-backed pages
+as removed.
 
 ### `wiki unsafe-local import`
 

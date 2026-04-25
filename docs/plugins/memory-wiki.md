@@ -63,7 +63,8 @@ Practical rule:
 
 If bridge mode reports zero exported artifacts, the active memory plugin is not
 currently exposing public bridge inputs yet. Run `openclaw wiki doctor` first,
-then confirm the active memory plugin supports public artifacts.
+then confirm the Gateway is running and the active memory plugin supports public
+artifacts.
 
 ## Vault modes
 
@@ -90,6 +91,10 @@ Bridge mode can index:
 - daily notes
 - memory root files
 - memory event logs
+
+Bridge status, doctor, and import commands call the Gateway so the CLI reads
+the same in-process memory capability as runtime wiki tools. For remote
+Gateways, pass the usual `--url` and `--token` options.
 
 ### `unsafe-local`
 
