@@ -120,6 +120,7 @@ import { registerProviderStreamForModel } from "../../provider-stream.js";
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
+import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 import { sanitizeToolUseResultPairing } from "../../session-transcript-repair.js";
 import {
   acquireSessionWriteLock,
@@ -1158,7 +1159,7 @@ export async function runEmbeddedAttempt(
     let systemPromptText = systemPromptOverride();
     const userPromptPrefixText = bootstrapRouting.userPromptPrefixText;
 
-    let sessionManager: ReturnType<typeof SessionManager.open> | undefined;
+    let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     let removeToolResultContextGuard: (() => void) | undefined;
     let trajectoryRecorder: ReturnType<typeof createTrajectoryRuntimeRecorder> | null = null;
@@ -1186,7 +1187,15 @@ export async function runEmbeddedAttempt(
         });
 
       await prewarmSessionFile(params.sessionFile);
-      sessionManager = SessionManager.open(params.sessionFile);
+      sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
+        agentId: sessionAgentId,
+        sessionKey: params.sessionKey,
+        config: params.config,
+        contextWindowTokens: params.contextTokenBudget,
+        inputProvenance: params.inputProvenance,
+        allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
+        allowedToolNames,
+      });
       trackSessionManagerAccess(params.sessionFile);
 
       await runAttemptContextEngineBootstrap({
@@ -1878,9 +1887,7 @@ export async function runEmbeddedAttempt(
       } catch (err) {
         await flushPendingToolResultsAfterIdle({
           agent: activeSession?.agent,
-          // SessionManager no longer wraps ToolResultFlushManager (guard
-          // wrapper removed); flush becomes a no-op.
-          sessionManager: null,
+          sessionManager,
           clearPendingOnTimeout: true,
         });
         activeSession.dispose();
