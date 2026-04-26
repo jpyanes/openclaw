@@ -151,7 +151,9 @@ describe("selectAssistantMessageEndGate", () => {
     );
 
     expect(first?.message).toBe(firstEvent.message);
-    expect(second?.message.content[0]).toMatchObject({ type: "text", text: "second" });
+    expect(second?.message).toMatchObject({
+      content: [{ type: "text", text: "second" }],
+    });
   });
 
   it("does not require text content to select the assistant message_end event", () => {
@@ -160,7 +162,9 @@ describe("selectAssistantMessageEndGate", () => {
       true,
     );
 
-    expect(empty?.message.content[0]).toMatchObject({ type: "text", text: "   " });
+    expect(empty?.message).toMatchObject({
+      content: [{ type: "text", text: "   " }],
+    });
   });
 
   it("ignores message_end events when the hook is not installed", () => {

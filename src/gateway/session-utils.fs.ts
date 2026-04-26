@@ -115,15 +115,20 @@ export function readSessionMessages(
     }
   }
 
-  const hasTreeMessages = parsedEntries.some(
+  const messageEntries = parsedEntries.filter(
     (entry) =>
       entry &&
       typeof entry === "object" &&
       !Array.isArray(entry) &&
-      typeof (entry as { id?: unknown }).id === "string" &&
-      "parentId" in entry &&
       (entry as { message?: unknown }).message,
   );
+  const hasTreeMessages =
+    messageEntries.length > 0 &&
+    messageEntries.every(
+      (entry) =>
+        typeof (entry as { id?: unknown }).id === "string" &&
+        "parentId" in (entry as Record<string, unknown>),
+    );
   let activeEntryIds: Set<string> | undefined;
   if (hasTreeMessages) {
     const entriesById = new Map<string, unknown>();

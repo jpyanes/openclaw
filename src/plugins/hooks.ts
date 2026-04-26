@@ -630,7 +630,7 @@ export function createHookRunner(
 
   /**
    * Run llm_message_end hook.
-   * Allows plugins to gate each visible assistant message before tools continue.
+   * Allows plugins to gate assistant messages at Pi message-end boundaries.
    */
   async function runLlmMessageEnd(
     event: PluginHookLlmMessageEndEvent,

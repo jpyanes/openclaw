@@ -277,7 +277,6 @@ export async function runBeforeToolCallHook(args: {
         toolCallId: args.toolCallId,
         agentId: args.ctx?.agentId,
         sessionKey: args.ctx?.sessionKey,
-        channelId: args.ctx?.channelId,
         signal: args.signal,
         log,
         logLabel: `before_tool_call:${toolName}`,

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { GlobalHookRunnerRegistry } from "./hook-registry.types.js";
 import type { PluginHookRegistration, PluginHookAgentContext } from "./hook-types.js";
@@ -17,6 +18,26 @@ const ctx: PluginHookAgentContext = {
   sessionKey: "session-1",
   sessionId: "sid-1",
 };
+
+function assistantMessage(text: string): AgentMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai",
+    provider: "test",
+    model: "test-model",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
 
 describe("before_agent_run hook", () => {
   it("returns undefined when no handlers registered", async () => {
@@ -319,7 +340,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        message: assistantMessage("hello"),
       },
       ctx,
     );
@@ -360,7 +381,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        message: { role: "assistant", content: [{ type: "text", text: "sensitive" }] },
+        message: assistantMessage("sensitive"),
       },
       ctx,
     );
@@ -393,7 +414,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        message: { role: "assistant", content: [{ type: "text", text: "unsatisfactory" }] },
+        message: assistantMessage("unsatisfactory"),
       },
       ctx,
     );

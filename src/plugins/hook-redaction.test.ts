@@ -397,4 +397,19 @@ describe("redactDuplicateUserMessage", () => {
     expect(userTexts).toEqual(["HOOK_BLOCK_RETRY tell me a fun fact"]);
     expect(remaining).toHaveLength(3);
   });
+
+  it("does not treat empty user messages as duplicates for any prompt", async () => {
+    await writeTranscript([
+      runnerMessage("user", ""),
+      runnerMessage("assistant", "hello"),
+      runnerMessage("user", "real prompt"),
+      runnerMessage("assistant", "response"),
+    ]);
+
+    const removed = await redactDuplicateUserMessage(sessionFile(), "real prompt");
+
+    expect(removed).toBe(0);
+    const remaining = await readTranscript();
+    expect(remaining).toHaveLength(4);
+  });
 });

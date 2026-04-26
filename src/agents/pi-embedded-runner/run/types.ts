@@ -64,7 +64,7 @@ export type EmbeddedRunAttemptResult = {
    * - "precheck": pre-prompt overflow recovery intentionally short-circuited the prompt so the
    *   outer run loop can recover via compaction/truncation before any model call is made.
    * - "hook:before_agent_run": a lifecycle hook blocked the run before the prompt was sent.
-   * - "hook:llm_message_end": a lifecycle hook blocked/redacted the first assistant message.
+   * - "hook:llm_message_end": a lifecycle hook blocked/redacted an assistant message.
    * - null: no promptError.
    */
   promptErrorSource:

@@ -230,6 +230,9 @@ export async function redactDuplicateUserMessage(
       continue;
     }
     const text = extractMessageText(nestedMessage ?? entry.parsed);
+    if (!text || !promptText) {
+      continue;
+    }
     if (text === promptText || text.includes(promptText) || promptText.includes(text)) {
       matchingUserIndices.push(entry.index);
     }

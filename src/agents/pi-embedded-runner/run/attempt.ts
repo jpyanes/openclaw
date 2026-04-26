@@ -2244,7 +2244,6 @@ export async function runEmbeddedAttempt(
               runId: params.runId,
               sessionKey: params.sessionKey,
               agentId: sessionAgentId,
-              channelId: params.messageChannel ?? params.messageProvider ?? undefined,
               signal,
               log,
             });
@@ -2717,7 +2716,6 @@ export async function runEmbeddedAttempt(
                   runId: params.runId,
                   sessionKey: params.sessionKey,
                   agentId: hookAgentId,
-                  channelId: params.messageChannel ?? params.messageProvider ?? undefined,
                   signal: params.abortSignal,
                   log,
                 });

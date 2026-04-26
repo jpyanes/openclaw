@@ -70,6 +70,25 @@ describe("llm hook runner methods", () => {
         sessionId: "session-1",
         provider: "openai",
         model: "gpt-5",
+        assistantTexts: ["hi"],
+        lastAssistant: { role: "assistant", content: "hi" },
+        usage: {
+          input: 10,
+          output: 20,
+          total: 30,
+        },
+      },
+      expectedEvent: { runId: "run-1", assistantTexts: ["hi"] },
+    },
+    {
+      name: "runLlmMessageEnd invokes registered llm_message_end hooks",
+      hookName: "llm_message_end" as const,
+      methodName: "runLlmMessageEnd" as const,
+      event: {
+        runId: "run-1",
+        sessionId: "session-1",
+        provider: "openai",
+        model: "gpt-5",
         message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
         usage: {
           input: 10,
@@ -81,25 +100,6 @@ describe("llm hook runner methods", () => {
         runId: "run-1",
         message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
       },
-    },
-    {
-      name: "runLlmMessageEnd invokes registered llm_message_end hooks",
-      hookName: "llm_message_end" as const,
-      methodName: "runLlmMessageEnd" as const,
-      event: {
-        runId: "run-1",
-        sessionId: "session-1",
-        provider: "openai",
-        model: "gpt-5",
-        assistantTexts: ["hi"],
-        lastAssistant: { role: "assistant", content: "hi" },
-        usage: {
-          input: 10,
-          output: 20,
-          total: 30,
-        },
-      },
-      expectedEvent: { runId: "run-1", assistantTexts: ["hi"] },
     },
   ] as const)("$name", async ({ hookName, expectedEvent, event }) => {
     await expectLlmHookCall({ hookName, event, expectedEvent });

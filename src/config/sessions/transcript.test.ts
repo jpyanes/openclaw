@@ -184,6 +184,39 @@ describe("appendAssistantMessageToSessionTranscript", () => {
     }
   });
 
+  it("emits blocked user inline updates with original content metadata", async () => {
+    writeTranscriptStore();
+    const emitSpy = vi.spyOn(transcriptEvents, "emitSessionTranscriptUpdate");
+
+    const result = await appendBlockedUserMessageToSessionTranscript({
+      sessionKey,
+      originalText: "secret prompt",
+      redactedText: "Blocked by policy.",
+      pluginId: "policy-plugin",
+      reason: "contains protected content",
+      storePath: fixture.storePath(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(emitSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey,
+        message: expect.objectContaining({
+          role: "user",
+          content: [{ type: "text", text: "Blocked by policy." }],
+          __openclaw: expect.objectContaining({
+            originalBlockedContent: expect.objectContaining({
+              content: [{ type: "text", text: "secret prompt" }],
+              blockedBy: "policy-plugin",
+              reason: "contains protected content",
+            }),
+          }),
+        }),
+      }),
+    );
+    emitSpy.mockRestore();
+  });
+
   it("does not append a duplicate delivery mirror when the latest assistant message already matches", async () => {
     writeTranscriptStore();
 

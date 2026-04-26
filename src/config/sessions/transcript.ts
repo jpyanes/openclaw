@@ -360,14 +360,25 @@ export async function appendBlockedUserMessageToSessionTranscript(params: {
   });
 
   switch (params.updateMode ?? "inline") {
-    case "inline":
+    case "inline": {
+      const inlineMessage =
+        isRecord(jsonlEntry.message) && isRecord(jsonlEntry.originalBlockedContent)
+          ? {
+              ...jsonlEntry.message,
+              __openclaw: {
+                ...(isRecord(jsonlEntry.message.__openclaw) ? jsonlEntry.message.__openclaw : {}),
+                originalBlockedContent: jsonlEntry.originalBlockedContent,
+              },
+            }
+          : jsonlEntry.message;
       emitSessionTranscriptUpdate({
         sessionFile,
         sessionKey,
-        message: jsonlEntry.message as Parameters<SessionManager["appendMessage"]>[0],
+        message: inlineMessage as Parameters<SessionManager["appendMessage"]>[0],
         messageId,
       });
       break;
+    }
     case "file-only":
       emitSessionTranscriptUpdate(sessionFile);
       break;

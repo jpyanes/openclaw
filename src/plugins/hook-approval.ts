@@ -32,7 +32,6 @@ export type RequestPluginApprovalParams = {
   runId?: string;
   sessionKey?: string;
   agentId?: string;
-  channelId?: string;
   signal?: AbortSignal;
   log?: { warn: (msg: string) => void };
   logLabel?: string;
@@ -45,7 +44,6 @@ export type HookApprovalParams = {
   runId?: string;
   sessionKey?: string;
   agentId?: string;
-  channelId?: string;
   signal?: AbortSignal;
   log?: { warn: (msg: string) => void };
 };
@@ -65,7 +63,6 @@ export async function requestHookApproval(params: HookApprovalParams): Promise<H
     runId: params.runId,
     sessionKey: params.sessionKey,
     agentId: params.agentId,
-    channelId: params.channelId,
     signal: params.signal,
     log: params.log,
     logLabel: params.hookPoint,

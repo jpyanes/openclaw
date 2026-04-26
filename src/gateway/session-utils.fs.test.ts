@@ -529,6 +529,29 @@ describe("readSessionMessages", () => {
     expect(typeof marker.timestamp).toBe("number");
   });
 
+  test("keeps legacy messages when a mixed transcript lacks a complete branch tree", () => {
+    const sessionId = "mixed-legacy-tree-session";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      { type: "session", version: 1, id: sessionId },
+      { type: "message", id: "legacy-user", message: { role: "user", content: "legacy hello" } },
+      {
+        type: "message",
+        id: "tree-assistant",
+        parentId: "legacy-user",
+        message: { role: "assistant", content: "tree hello" },
+      },
+    ];
+    fs.writeFileSync(transcriptPath, lines.map((line) => JSON.stringify(line)).join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+
+    expect(out.map((message) => (message as { content?: unknown }).content)).toEqual([
+      "legacy hello",
+      "tree hello",
+    ]);
+  });
+
   test.each([
     {
       sessionId: "cross-agent-default-root",

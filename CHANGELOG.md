@@ -180,7 +180,7 @@ Docs: https://docs.openclaw.ai
 - CLI/Gateway: make `gateway status` start faster by skipping plugin loading on the read-only status path. (#71364) Thanks @andyylin.
 - Plugins/compatibility: add a central plugin compatibility registry and docs for SDK/config/setup/runtime deprecation records, including dated migration metadata for legacy harness naming and other plugin-facing aliases. Thanks @vincentkoc.
 - Agents/bootstrap: add `agents.defaults.contextInjection: "never"` to disable workspace bootstrap file injection for agents that fully own their prompt lifecycle. (#65006) Thanks @xDarkicex.
-- Plugin hooks: add HITL lifecycle approval gates for `before_agent_run` and first visible assistant message output while reusing the existing plugin approval flow. (#71411) Thanks @jesse-merhi.
+- Plugin hooks: add HITL lifecycle approval gates for `before_agent_run` and assistant message-end output while reusing the existing plugin approval flow. (#71411) Thanks @jesse-merhi.
 
 ### Fixes
 
