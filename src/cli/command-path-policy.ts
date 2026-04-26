@@ -51,7 +51,7 @@ export function resolveCliCatalogCommandPath(argv: string[]): string[] {
       bestMatch = entry.commandPath;
     }
   }
-  return bestMatch ? [...bestMatch] : [tokens[0] as string];
+  return bestMatch ? [...bestMatch] : [tokens[0]];
 }
 
 export function resolveCliNetworkProxyPolicy(argv: string[]): CliNetworkProxyPolicy {
