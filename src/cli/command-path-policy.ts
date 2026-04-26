@@ -17,9 +17,12 @@ const DEFAULT_CLI_COMMAND_PATH_POLICY: CliCommandPathPolicy = {
   networkProxy: "default",
 };
 
-export function resolveCliCommandPathPolicy(commandPath: string[]): CliCommandPathPolicy {
+export function resolveCliCommandPathPolicy(
+  commandPath: string[],
+  catalog: readonly CliCommandCatalogEntry[] = cliCommandCatalog,
+): CliCommandPathPolicy {
   let resolvedPolicy: CliCommandPathPolicy = { ...DEFAULT_CLI_COMMAND_PATH_POLICY };
-  for (const entry of cliCommandCatalog) {
+  for (const entry of catalog) {
     if (!entry.policy) {
       continue;
     }
@@ -63,17 +66,6 @@ export function resolveCliNetworkProxyPolicy(
   catalog: readonly CliCommandCatalogEntry[] = cliCommandCatalog,
 ): CliNetworkProxyPolicy {
   const commandPath = resolveCliCatalogCommandPath(argv, catalog);
-  let resolvedPolicy = DEFAULT_CLI_COMMAND_PATH_POLICY.networkProxy;
-  for (const entry of catalog) {
-    const networkProxy = entry.policy?.networkProxy;
-    if (!networkProxy) {
-      continue;
-    }
-    if (!matchesCommandPath(commandPath, entry.commandPath, { exact: entry.exact })) {
-      continue;
-    }
-    resolvedPolicy =
-      typeof networkProxy === "function" ? networkProxy({ argv, commandPath }) : networkProxy;
-  }
-  return resolvedPolicy;
+  const networkProxy = resolveCliCommandPathPolicy(commandPath, catalog).networkProxy;
+  return typeof networkProxy === "function" ? networkProxy({ argv, commandPath }) : networkProxy;
 }
