@@ -319,7 +319,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        assistantTexts: ["hello"],
+        message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
       },
       ctx,
     );
@@ -360,7 +360,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        assistantTexts: ["sensitive"],
+        message: { role: "assistant", content: [{ type: "text", text: "sensitive" }] },
       },
       ctx,
     );
@@ -393,7 +393,7 @@ describe("llm output gates", () => {
         sessionId: "s1",
         provider: "test",
         model: "test-model",
-        assistantTexts: ["unsatisfactory"],
+        message: { role: "assistant", content: [{ type: "text", text: "unsatisfactory" }] },
       },
       ctx,
     );

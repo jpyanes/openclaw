@@ -406,7 +406,6 @@ function replaceAssistantWithText(message: AgentMessage, text: string): void {
 
 export type LlmMessageEndGateConsumption = {
   message: AgentMessage;
-  agentEvent: AgentEvent;
 };
 
 export function selectAssistantMessageEndGate(
@@ -419,7 +418,7 @@ export function selectAssistantMessageEndGate(
   if (!hasHook) {
     return null;
   }
-  return { message: event.message, agentEvent: event };
+  return { message: event.message };
 }
 
 export function formatMessageEndRetryExhaustedBlockMessage(params: {
@@ -2214,10 +2213,8 @@ export async function runEmbeddedAttempt(
               sessionId: params.sessionId,
               provider: params.provider,
               model: params.modelId,
-              agentEvent: gate.agentEvent,
               prompt: finalPromptText ?? params.prompt,
-              assistantTexts: readAssistantTextBlocks(gate.message),
-              lastAssistant: gate.message,
+              message: gate.message,
               usage: attemptUsage,
             },
             {

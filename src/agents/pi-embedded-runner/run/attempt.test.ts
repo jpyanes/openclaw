@@ -151,7 +151,6 @@ describe("selectAssistantMessageEndGate", () => {
     );
 
     expect(first?.message).toBe(firstEvent.message);
-    expect(first?.agentEvent).toBe(firstEvent);
     expect(second?.message.content[0]).toMatchObject({ type: "text", text: "second" });
   });
 

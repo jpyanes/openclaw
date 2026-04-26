@@ -32,10 +32,7 @@ async function expectLlmHookCall(params: {
     );
   } else {
     await runner.runLlmMessageEnd(
-      {
-        ...params.event,
-        assistantTexts: [...((params.event.assistantTexts as string[] | undefined) ?? [])],
-      } as Parameters<typeof runner.runLlmMessageEnd>[0],
+      params.event as Parameters<typeof runner.runLlmMessageEnd>[0],
       hookCtx,
     );
   }
@@ -73,15 +70,17 @@ describe("llm hook runner methods", () => {
         sessionId: "session-1",
         provider: "openai",
         model: "gpt-5",
-        assistantTexts: ["hi"],
-        lastAssistant: { role: "assistant", content: "hi" },
+        message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
         usage: {
           input: 10,
           output: 20,
           total: 30,
         },
       },
-      expectedEvent: { runId: "run-1", assistantTexts: ["hi"] },
+      expectedEvent: {
+        runId: "run-1",
+        message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      },
     },
     {
       name: "runLlmMessageEnd invokes registered llm_message_end hooks",
