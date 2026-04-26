@@ -345,6 +345,40 @@ describe("control UI routing", () => {
     ).toBeNull();
   });
 
+  it("keeps manually entered login-gate tokens scoped when editing the gateway URL", async () => {
+    const app = mountApp("/ui/overview");
+    app.connected = false;
+    app.requestUpdate();
+    await app.updateComplete;
+
+    const originalGatewayUrl = app.settings.gatewayUrl;
+    const tokenInput = app.querySelector<HTMLInputElement>(
+      '.login-gate input[placeholder^="OPENCLAW_GATEWAY_TOKEN"]',
+    );
+    expect(tokenInput).not.toBeNull();
+    tokenInput!.value = "manual-token";
+    tokenInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    await app.updateComplete;
+
+    expect(app.settings.token).toBe("manual-token");
+    expect(app.settings.tokenGatewayUrl).toBe(originalGatewayUrl);
+
+    const gatewayUrlInput = app.querySelector<HTMLInputElement>(
+      '.login-gate input[placeholder="ws://127.0.0.1:18789"]',
+    );
+    expect(gatewayUrlInput).not.toBeNull();
+    gatewayUrlInput!.value = "wss://other-gateway.example/openclaw";
+    gatewayUrlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    await app.updateComplete;
+
+    expect(app.settings.gatewayUrl).toBe("wss://other-gateway.example/openclaw");
+    expect(app.settings.token).toBe("manual-token");
+    expect(app.settings.tokenGatewayUrl).toBe(originalGatewayUrl);
+    expect(
+      sessionStorage.getItem("openclaw.control.token.v1:wss://other-gateway.example/openclaw"),
+    ).toBeNull();
+  });
+
   it("keeps a hash token pending until the gateway URL change is confirmed", async () => {
     const app = mountApp(
       "/ui/overview?gatewayUrl=wss://other-gateway.example/openclaw#token=abc123",

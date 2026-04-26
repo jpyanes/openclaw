@@ -25,7 +25,13 @@ export function renderLoginGate(state: AppViewState) {
               .value=${state.settings.gatewayUrl}
               @input=${(e: Event) => {
                 const v = (e.target as HTMLInputElement).value;
-                state.applySettings({ ...state.settings, gatewayUrl: v });
+                state.applySettings({
+                  ...state.settings,
+                  gatewayUrl: v,
+                  tokenGatewayUrl: state.settings.token.trim()
+                    ? (state.settings.tokenGatewayUrl ?? state.settings.gatewayUrl)
+                    : undefined,
+                });
               }}
               placeholder="ws://127.0.0.1:18789"
             />
@@ -40,7 +46,13 @@ export function renderLoginGate(state: AppViewState) {
                 .value=${state.settings.token}
                 @input=${(e: Event) => {
                   const v = (e.target as HTMLInputElement).value;
-                  state.applySettings({ ...state.settings, token: v });
+                  state.applySettings({
+                    ...state.settings,
+                    token: v,
+                    tokenGatewayUrl: v.trim()
+                      ? state.settings.gatewayUrl
+                      : state.settings.tokenGatewayUrl,
+                  });
                 }}
                 placeholder="OPENCLAW_GATEWAY_TOKEN (${t("login.passwordPlaceholder")})"
                 @keydown=${(e: KeyboardEvent) => {
