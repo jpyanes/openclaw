@@ -380,18 +380,20 @@ function prependPrivatePiAgentListener(agent: Agent, listener: CoreAgentListener
   };
 }
 
-function readAssistantVisibleText(message: AgentMessage): string {
+function readAssistantTextBlocks(message: AgentMessage): string[] {
   if (message.role !== "assistant" || !Array.isArray(message.content)) {
-    return "";
+    return [];
   }
-  return message.content
-    .map((part) => {
-      if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text") {
-        return "";
-      }
-      return "text" in part && typeof part.text === "string" ? part.text : "";
-    })
-    .join("");
+  return message.content.flatMap((part) => {
+    if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text") {
+      return [];
+    }
+    return "text" in part && typeof part.text === "string" ? [part.text] : [];
+  });
+}
+
+function hasAssistantTextBlock(message: AgentMessage): boolean {
+  return readAssistantTextBlocks(message).some((text) => text.trim().length > 0);
 }
 
 function replaceAssistantWithText(message: AgentMessage, text: string): void {
@@ -403,24 +405,21 @@ function replaceAssistantWithText(message: AgentMessage, text: string): void {
 }
 
 export type LlmMessageEndGateConsumption = {
-  visibleText: string;
   message: AgentMessage;
   agentEvent: AgentEvent;
 };
 
-export function selectVisibleAssistantMessageEndGate(
+export function selectAssistantMessageEndGate(
   event: AgentEvent,
   hasHook: boolean,
 ): LlmMessageEndGateConsumption | null {
   if (event.type !== "message_end" || event.message.role !== "assistant") {
     return null;
   }
-  const message = event.message;
-  const visibleText = readAssistantVisibleText(message).trim();
-  if (!visibleText || !hasHook) {
+  if (!hasHook) {
     return null;
   }
-  return { visibleText, message, agentEvent: event };
+  return { message: event.message, agentEvent: event };
 }
 
 export function formatMessageEndRetryExhaustedBlockMessage(params: {
@@ -454,8 +453,8 @@ export function prepareMessageEndRetryContinuation(
     !transcriptLeaf.parentId ||
     !messageLeaf ||
     messageLeaf.role !== "assistant" ||
-    readAssistantVisibleText(transcriptLeaf.message as AgentMessage).trim() ||
-    readAssistantVisibleText(messageLeaf).trim()
+    hasAssistantTextBlock(transcriptLeaf.message as AgentMessage) ||
+    hasAssistantTextBlock(messageLeaf)
   ) {
     return null;
   }
@@ -2202,7 +2201,7 @@ export async function runEmbeddedAttempt(
           if (!activeHookRunner) {
             return;
           }
-          const gate = selectVisibleAssistantMessageEndGate(
+          const gate = selectAssistantMessageEndGate(
             event,
             activeHookRunner.hasHooks("llm_message_end"),
           );
@@ -2217,7 +2216,7 @@ export async function runEmbeddedAttempt(
               model: params.modelId,
               agentEvent: gate.agentEvent,
               prompt: finalPromptText ?? params.prompt,
-              assistantTexts: [gate.visibleText],
+              assistantTexts: readAssistantTextBlocks(gate.message),
               lastAssistant: gate.message,
               usage: attemptUsage,
             },

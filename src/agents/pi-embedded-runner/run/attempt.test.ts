@@ -26,7 +26,7 @@ import {
   resolveEmbeddedAgentBaseStreamFn,
   resolveAttemptFsWorkspaceOnly,
   resolveEmbeddedAgentStreamFn,
-  selectVisibleAssistantMessageEndGate,
+  selectAssistantMessageEndGate,
   resolveUnknownToolGuardThreshold,
   shouldCreateBundleMcpRuntimeForAttempt,
   resolvePromptBuildHookResult,
@@ -141,32 +141,33 @@ describe("prepareMessageEndRetryContinuation", () => {
   });
 });
 
-describe("selectVisibleAssistantMessageEndGate", () => {
-  it("selects every visible assistant message_end event", () => {
+describe("selectAssistantMessageEndGate", () => {
+  it("selects every assistant message_end event", () => {
     const firstEvent = { type: "message_end", message: assistantTextMessage("first") } as const;
-    const first = selectVisibleAssistantMessageEndGate(firstEvent, true);
-    const second = selectVisibleAssistantMessageEndGate(
+    const first = selectAssistantMessageEndGate(firstEvent, true);
+    const second = selectAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("second") },
       true,
     );
 
-    expect(first?.visibleText).toBe("first");
+    expect(first?.message).toBe(firstEvent.message);
     expect(first?.agentEvent).toBe(firstEvent);
-    expect(second?.visibleText).toBe("second");
+    expect(second?.message.content[0]).toMatchObject({ type: "text", text: "second" });
   });
 
-  it("ignores assistant message_end events with no visible text", () => {
-    const empty = selectVisibleAssistantMessageEndGate(
+  it("does not require text content to select the assistant message_end event", () => {
+    const empty = selectAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("   ") },
       true,
     );
-    const visible = selectVisibleAssistantMessageEndGate(
-      { type: "message_end", message: assistantTextMessage("ready") },
-      true,
-    );
 
-    expect(empty).toBeNull();
-    expect(visible?.visibleText).toBe("ready");
+    expect(empty?.message.content[0]).toMatchObject({ type: "text", text: "   " });
+  });
+
+  it("ignores message_end events when the hook is not installed", () => {
+    const event = { type: "message_end", message: assistantTextMessage("ready") } as const;
+
+    expect(selectAssistantMessageEndGate(event, false)).toBeNull();
   });
 });
 

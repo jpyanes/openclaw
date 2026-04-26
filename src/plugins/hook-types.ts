@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import type {
   ReplyDispatchKind,
@@ -226,12 +226,10 @@ export type PluginHookLlmOutputEvent = {
 
 export type PluginHookLlmMessageEndEvent = PluginHookLlmOutputEvent & {
   /**
-   * Raw Pi lifecycle event for this message boundary.
-   *
-   * Kept as unknown because plugin hooks should not depend on Pi internals for
-   * type safety, but advanced policies may inspect provider/tool-call metadata.
+   * Pi lifecycle event that triggered this hook, including the assistant message
+   * and non-text blocks such as tool calls.
    */
-  agentEvent?: unknown;
+  agentEvent?: AgentEvent;
 };
 
 export type PluginHookAgentEndEvent = {
