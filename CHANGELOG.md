@@ -70,6 +70,7 @@ Docs: https://docs.openclaw.ai
 - ACPX/Droid: add Factory Droid to the live ACP bind Docker matrix, including `.factory` settings staging, `FACTORY_API_KEY` forwarding, and the single-agent `test:docker:live-acp-bind:droid` recipe.
 - TTS/personas: add provider-aware TTS personas with deterministic provider binding merges, `/tts persona` controls, gateway/CLI persona state, Google Gemini `audio-profile-v1` prompt wrapping, and OpenAI instruction mapping. (#70748) Thanks @barronlroth.
 - Voice Wake: add trigger-based routing so macOS voice wake phrases can select a configured agent or session target, with Gateway routing APIs and node update events. (#30354) Thanks @longbiaochen.
+- Security/SSRF: add opt-in network-level SSRF protection via an operator-managed HTTP forward proxy configured with `proxy.proxyUrl`, so deployments can route OpenClaw's process-local HTTP clients through a filtering forward proxy while keeping application-level guards active. (#70044) Thanks @jesse-merhi.
 
 ### Fixes
 
@@ -443,7 +444,6 @@ Docs: https://docs.openclaw.ai
 - Diagnostics: emit structured tool execution diagnostic events with trace context, timing, and redacted error metadata. Thanks @vincentkoc.
 - Diagnostics: emit structured run and model-call diagnostic events with trace context, duration, and non-message error metadata. Thanks @vincentkoc.
 - CLI/Gateway: make `gateway status` start faster by skipping plugin loading on the read-only status path. (#71364) Thanks @andyylin.
-- Security/SSRF: add opt-in network-level SSRF protection via an operator-managed HTTP forward proxy configured with `proxy.proxyUrl`, so deployments can route OpenClaw's process-local HTTP clients through a filtering forward proxy while keeping application-level guards active. (#70044) Thanks @jesse-merhi.
 
 ### Fixes
 
