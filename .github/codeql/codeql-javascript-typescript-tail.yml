@@ -1,0 +1,63 @@
+name: openclaw-codeql-javascript-typescript-tail
+
+paths:
+  - src/shared
+  - src/secrets
+  - src/cron
+  - src/media-understanding
+  - src/media
+  - src/acp
+  - src/daemon
+  - src/security
+  - src/tasks
+  - src/hooks
+  - src/tui
+  - src/logging
+  - src/utils
+  - src/process
+  - src/terminal
+  - src/crestodian
+  - src/sessions
+  - src/wizard
+  - src/tts
+  - src/flows
+  - src/video-generation
+  - src/proxy-capture
+  - src/node-host
+  - src/routing
+  - src/types
+  - src/status
+  - src/pairing
+  - src/music-generation
+  - src/mcp
+  - src/realtime-voice
+  - src/markdown
+  - src/image-generation
+  - src/link-understanding
+  - src/context-engine
+  - src/trajectory
+  - src/model-catalog
+  - src/media-generation
+  - src/canvas-host
+  - src/realtime-transcription
+  - src/web-search
+  - src/web-fetch
+  - src/chat
+  - src/bootstrap
+  - src/web
+  - ui/src
+  - skills
+
+paths-ignore:
+  - apps
+  - dist
+  - docs
+  - "**/node_modules"
+  - "**/coverage"
+  - "**/*.generated.ts"
+  - "**/*.bundle.js"
+  - "**/*-runtime.js"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.e2e.test.ts"
+  - "**/*.e2e.test.tsx"

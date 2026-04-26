@@ -19,13 +19,14 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
+    name: Analyze (${{ matrix.job_name }})
     runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - language: javascript-typescript
+          - job_name: javascript-typescript-core
+            language: javascript-typescript
             runs_on: blacksmith-32vcpu-ubuntu-2404
             needs_node: true
             needs_python: false
@@ -33,8 +34,32 @@ jobs:
             needs_swift_tools: false
             needs_manual_build: false
             needs_autobuild: false
-            config_file: ./.github/codeql/codeql-javascript-typescript.yml
-          - language: actions
+            analyze_category: javascript-typescript-core
+            config_file: ./.github/codeql/codeql-javascript-typescript-core.yml
+          - job_name: javascript-typescript-extensions
+            language: javascript-typescript
+            runs_on: blacksmith-32vcpu-ubuntu-2404
+            needs_node: true
+            needs_python: false
+            needs_java: false
+            needs_swift_tools: false
+            needs_manual_build: false
+            needs_autobuild: false
+            analyze_category: javascript-typescript-extensions
+            config_file: ./.github/codeql/codeql-javascript-typescript-extensions.yml
+          - job_name: javascript-typescript-tail
+            language: javascript-typescript
+            runs_on: blacksmith-32vcpu-ubuntu-2404
+            needs_node: true
+            needs_python: false
+            needs_java: false
+            needs_swift_tools: false
+            needs_manual_build: false
+            needs_autobuild: false
+            analyze_category: javascript-typescript-tail
+            config_file: ./.github/codeql/codeql-javascript-typescript-tail.yml
+          - job_name: actions
+            language: actions
             runs_on: blacksmith-16vcpu-ubuntu-2404
             needs_node: false
             needs_python: false
@@ -42,8 +67,10 @@ jobs:
             needs_swift_tools: false
             needs_manual_build: false
             needs_autobuild: false
+            analyze_category: actions
             config_file: ""
-          - language: python
+          - job_name: python
+            language: python
             runs_on: blacksmith-16vcpu-ubuntu-2404
             needs_node: false
             needs_python: true
@@ -51,8 +78,10 @@ jobs:
             needs_swift_tools: false
             needs_manual_build: false
             needs_autobuild: false
+            analyze_category: python
             config_file: ""
-          - language: java-kotlin
+          - job_name: java-kotlin
+            language: java-kotlin
             runs_on: blacksmith-16vcpu-ubuntu-2404
             needs_node: false
             needs_python: false
@@ -60,8 +89,10 @@ jobs:
             needs_swift_tools: false
             needs_manual_build: true
             needs_autobuild: false
+            analyze_category: java-kotlin
             config_file: ""
-          - language: swift
+          - job_name: swift
+            language: swift
             runs_on: ${{ github.repository == 'openclaw/openclaw' && 'blacksmith-12vcpu-macos-latest' || 'macos-latest' }}
             needs_node: false
             needs_python: false
@@ -69,6 +100,7 @@ jobs:
             needs_swift_tools: true
             needs_manual_build: true
             needs_autobuild: false
+            analyze_category: swift
             config_file: ""
     steps:
       - name: Checkout
@@ -135,4 +167,4 @@ jobs:
       - name: Analyze
         uses: github/codeql-action/analyze@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
         with:
-          category: "/language:${{ matrix.language }}"
+          category: "/language:${{ matrix.analyze_category }}"

@@ -1,10 +1,16 @@
-name: openclaw-codeql-javascript-typescript
+name: openclaw-codeql-javascript-typescript-core
 
 paths:
-  - src
-  - extensions
-  - ui/src
-  - skills
+  - src/agents
+  - src/plugin-sdk
+  - src/infra
+  - src/gateway
+  - src/commands
+  - src/auto-reply
+  - src/plugins
+  - src/cli
+  - src/config
+  - src/channels
 
 paths-ignore:
   - apps
