@@ -423,11 +423,11 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
     const packageRoot = mkdtempSync(join(tmpdir(), "openclaw-cross-os-stage-debris-"));
     try {
       mkdirSync(
-        join(packageRoot, "dist", "extensions", "demo", ".openclaw-install-stage", "node_modules"),
+        join(packageRoot, "dist", "Extensions", "demo", ".OpenClaw-Install-Stage", "node_modules"),
         { recursive: true },
       );
       writeFileSync(
-        join(packageRoot, "dist", "extensions", "demo", ".openclaw-install-stage", "package.json"),
+        join(packageRoot, "dist", "Extensions", "demo", ".OpenClaw-Install-Stage", "package.json"),
         "{}\n",
         "utf8",
       );

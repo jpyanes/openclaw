@@ -27,23 +27,28 @@ const OMITTED_DIST_SUBTREE_PATTERNS = [
   /^dist\/extensions\/node_modules(?:\/|$)/u,
   /^dist\/extensions\/[^/]+\/node_modules(?:\/|$)/u,
   /^dist\/extensions\/[^/]+\/\.openclaw-runtime-deps-[^/]+(?:\/|$)/u,
-  // Bundled-runtime-deps install staging dirs are created on-the-fly during
-  // plugin activation and only persist between an install attempt and its
-  // commit. They MUST NOT trigger "unexpected packaged dist file" verifier
-  // errors. Matches both the bare `.openclaw-install-stage` (used by
-  // bundled-runtime-deps.ts) and the `mkdtemp`-suffixed variants like
-  // `.openclaw-install-stage-AbC123` (used by install-package-dir.ts).
-  // The `i` flag is required so case-insensitive filesystems (default macOS,
-  // Windows) treat `.OpenClaw-Install-Stage` and the canonical lowercase form
-  // as the same path; the runtime install path resolves to the same inode
-  // either way. (#71752, aisle CWE-180)
-  /^dist\/extensions\/[^/]+\/\.openclaw-install-stage(?:-[^/]+)?(?:\/|$)/iu,
   /^dist\/extensions\/qa-matrix(?:\/|$)/u,
   new RegExp(`^dist/plugin-sdk/extensions/${LEGACY_QA_LAB_DIR}(?:/|$)`, "u"),
 ] as const;
+const INSTALL_STAGE_DEBRIS_DIR_PATTERN = /^\.openclaw-install-stage(?:-[^/]+)?$/iu;
 
 function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+function isInstallStageDirName(value: string): boolean {
+  return INSTALL_STAGE_DEBRIS_DIR_PATTERN.test(value);
+}
+
+export function isBundledRuntimeDepsInstallStagePath(relativePath: string): boolean {
+  const parts = normalizeRelativePath(relativePath).split("/");
+  return (
+    parts.length >= 4 &&
+    parts[0]?.toLowerCase() === "dist" &&
+    parts[1]?.toLowerCase() === "extensions" &&
+    Boolean(parts[2]) &&
+    isInstallStageDirName(parts[3] ?? "")
+  );
 }
 
 function isPackagedDistPath(relativePath: string): boolean {
@@ -79,7 +84,10 @@ function isPackagedDistPath(relativePath: string): boolean {
 }
 
 function isOmittedDistSubtree(relativePath: string): boolean {
-  return OMITTED_DIST_SUBTREE_PATTERNS.some((pattern) => pattern.test(relativePath));
+  return (
+    isBundledRuntimeDepsInstallStagePath(relativePath) ||
+    OMITTED_DIST_SUBTREE_PATTERNS.some((pattern) => pattern.test(relativePath))
+  );
 }
 
 async function collectRelativeFiles(rootDir: string, baseDir: string): Promise<string[]> {
@@ -124,49 +132,76 @@ export async function collectPackageDistInventory(packageRoot: string): Promise<
   return await collectRelativeFiles(path.join(packageRoot, "dist"), packageRoot);
 }
 
-// Case-insensitive: a malicious tarball that ships `.OpenClaw-Install-Stage`
-// on a case-insensitive filesystem (default macOS, Windows) would otherwise
-// evade this check while still resolving to the canonical lowercase path at
-// runtime install time. (aisle CWE-180 on PR #71774)
-const INSTALL_STAGE_DEBRIS_DIR_PATTERN = /^\.openclaw-install-stage(?:-[^/]+)?$/iu;
-
 export async function collectBundledRuntimeDepsStagingDebrisPaths(
   packageRoot: string,
 ): Promise<string[]> {
-  const extensionsDir = path.join(packageRoot, "dist", "extensions");
-  let extensionEntries: import("node:fs").Dirent[];
+  const distDirs: string[] = [];
   try {
-    extensionEntries = await fs.readdir(extensionsDir, { withFileTypes: true });
+    const packageRootEntries = await fs.readdir(packageRoot, { withFileTypes: true });
+    for (const entry of packageRootEntries) {
+      if (entry.isDirectory() && entry.name.toLowerCase() === "dist") {
+        distDirs.push(path.join(packageRoot, entry.name));
+      }
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
     }
     throw error;
   }
+
   const debris: string[] = [];
-  for (const extensionEntry of extensionEntries) {
-    if (!extensionEntry.isDirectory()) {
-      continue;
-    }
-    const extensionPath = path.join(extensionsDir, extensionEntry.name);
-    let stagingEntries: import("node:fs").Dirent[];
+  for (const distDir of distDirs) {
+    let distEntries: import("node:fs").Dirent[];
     try {
-      stagingEntries = await fs.readdir(extensionPath, { withFileTypes: true });
+      distEntries = await fs.readdir(distDir, { withFileTypes: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         continue;
       }
       throw error;
     }
-    for (const stagingEntry of stagingEntries) {
-      if (!INSTALL_STAGE_DEBRIS_DIR_PATTERN.test(stagingEntry.name)) {
+
+    for (const distEntry of distEntries) {
+      if (!distEntry.isDirectory() || distEntry.name.toLowerCase() !== "extensions") {
         continue;
       }
-      debris.push(
-        normalizeRelativePath(
-          path.relative(packageRoot, path.join(extensionPath, stagingEntry.name)),
-        ),
-      );
+      const extensionsDir = path.join(distDir, distEntry.name);
+      let extensionEntries: import("node:fs").Dirent[];
+      try {
+        extensionEntries = await fs.readdir(extensionsDir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+
+      for (const extensionEntry of extensionEntries) {
+        if (!extensionEntry.isDirectory()) {
+          continue;
+        }
+        const extensionPath = path.join(extensionsDir, extensionEntry.name);
+        let stagingEntries: import("node:fs").Dirent[];
+        try {
+          stagingEntries = await fs.readdir(extensionPath, { withFileTypes: true });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            continue;
+          }
+          throw error;
+        }
+        for (const stagingEntry of stagingEntries) {
+          if (!isInstallStageDirName(stagingEntry.name)) {
+            continue;
+          }
+          debris.push(
+            normalizeRelativePath(
+              path.relative(packageRoot, path.join(extensionPath, stagingEntry.name)),
+            ),
+          );
+        }
+      }
     }
   }
   return debris.toSorted((left, right) => left.localeCompare(right));
@@ -178,10 +213,11 @@ export async function assertNoBundledRuntimeDepsStagingDebris(packageRoot: strin
     return;
   }
   // Reject pre-populated bundled-runtime-deps staging dirs at release/package
-  // time: the runtime verifier ignores them as legitimate post-install debris,
-  // but a tarball that ships them under dist/extensions/*/ is a supply-chain
-  // hazard — a staged package.json/node_modules under .openclaw-install-stage*
-  // would otherwise be respected by the next plugin install. (#71752)
+  // time. The runtime verifier ignores this same path class as legitimate
+  // post-install debris, but a tarball that ships it could be reused by the
+  // next plugin dependency repair. The path match is case-insensitive because
+  // default macOS/Windows filesystems alias mixed-case names to the canonical
+  // runtime path. (#71752)
   throw new Error(
     `unexpected bundled-runtime-deps install staging debris in package dist: ${debris.join(", ")}`,
   );
