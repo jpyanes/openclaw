@@ -67,7 +67,6 @@ export function resolveCliNetworkProxyPolicy(
   catalog: readonly CliCommandCatalogEntry[] = cliCommandCatalog,
 ): CliNetworkProxyPolicy {
   const commandPath = resolveCliCatalogCommandPath(argv, catalog);
-  const commandTokens = getCliCommandTokens(argv);
   let resolvedPolicy = DEFAULT_CLI_COMMAND_PATH_POLICY.networkProxy;
   for (const entry of catalog) {
     const networkProxy = entry.policy?.networkProxy;
@@ -78,9 +77,7 @@ export function resolveCliNetworkProxyPolicy(
       continue;
     }
     resolvedPolicy =
-      typeof networkProxy === "function"
-        ? networkProxy({ argv, commandPath: commandTokens })
-        : networkProxy;
+      typeof networkProxy === "function" ? networkProxy({ argv, commandPath }) : networkProxy;
   }
   return resolvedPolicy;
 }

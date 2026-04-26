@@ -188,4 +188,11 @@ describe("command-path-policy", () => {
       resolveCliCatalogCommandPath(["node", "openclaw", "message", "send", "--to", "demo"]),
     ).toEqual(["message"]);
   });
+
+  it("treats bare gateway invocations with options as the gateway runtime", () => {
+    const argv = ["node", "openclaw", "gateway", "--port", "1234"];
+
+    expect(resolveCliCatalogCommandPath(argv)).toEqual(["gateway"]);
+    expect(resolveCliNetworkProxyPolicy(argv)).toBe("default");
+  });
 });
