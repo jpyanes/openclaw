@@ -28,14 +28,12 @@ import {
   normalizeOptionalString,
 } from "../shared/string-coerce.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
+import { resolveCliNetworkProxyPolicy } from "./command-path-policy.js";
 import {
   shouldRegisterPrimaryCommandOnly,
   shouldSkipPluginCommandRegistration,
 } from "./command-registration-policy.js";
-import {
-  shouldEnsureCliPathForCommandPath,
-  shouldStartNetworkProxyForCli,
-} from "./command-startup-policy.js";
+import { shouldEnsureCliPathForCommandPath } from "./command-startup-policy.js";
 import { maybeRunCliInContainer, parseCliContainerArgs } from "./container-target.js";
 import { applyCliProfileEnv, parseCliProfileArgs } from "./profile.js";
 import { createCliProgress } from "./progress.js";
@@ -112,7 +110,7 @@ export function shouldStartProxyForCli(argv: string[]): boolean {
   if (invocation.hasHelpOrVersion || !primary) {
     return false;
   }
-  return shouldStartNetworkProxyForCli(argv);
+  return resolveCliNetworkProxyPolicy(argv) === "default";
 }
 
 export function resolveMissingPluginCommandMessage(
