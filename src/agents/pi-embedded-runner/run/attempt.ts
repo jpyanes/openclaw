@@ -2263,7 +2263,6 @@ export async function runEmbeddedAttempt(
             if (wantsRetry && llmOutputRetryCount < maxRetries) {
               llmOutputRetryCount += 1;
               llmOutputRetryRequested = true;
-              promptErrorSource = "hook:llm_message_end";
               replaceAssistantWithText(gate.message, "");
               emitAgentEvent({
                 runId: params.runId,

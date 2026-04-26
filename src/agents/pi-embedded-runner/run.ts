@@ -938,6 +938,8 @@ export async function runEmbeddedPiAgent(
           const {
             aborted,
             externalAbort,
+            promptError,
+            promptErrorSource,
             preflightRecovery,
             timedOut,
             idleTimedOut,
@@ -946,8 +948,6 @@ export async function runEmbeddedPiAgent(
             lastAssistant: sessionLastAssistant,
             currentAttemptAssistant,
           } = attempt;
-          let promptError = attempt.promptError;
-          let promptErrorSource = attempt.promptErrorSource;
           bootstrapPromptWarningSignaturesSeen =
             attempt.bootstrapPromptWarningSignaturesSeen ??
             (attempt.bootstrapPromptWarningSignature
@@ -1385,17 +1385,12 @@ export async function runEmbeddedPiAgent(
             };
           }
 
-          // Message-end hook blocks are policy decisions, not provider failures.
-          if (promptErrorSource === "hook:llm_message_end" && !aborted) {
+          if (attempt.llmOutputRetryRequested && !aborted) {
             llmOutputRetryCountCarry = attempt.llmOutputRetryCount ?? 0;
-            if (attempt.llmOutputRetryRequested) {
-              promptError = null;
-              promptErrorSource = null;
-              log.debug(
-                `[hook:llm_message_end] block requested retry — re-invoking attempt (count=${llmOutputRetryCountCarry})`,
-              );
-              continue;
-            }
+            log.debug(
+              `[hook:llm_message_end] block requested retry — re-invoking attempt (count=${llmOutputRetryCountCarry})`,
+            );
+            continue;
           }
 
           if (promptError && !aborted && promptErrorSource !== "compaction") {
