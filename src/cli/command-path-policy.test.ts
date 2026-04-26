@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CliCommandCatalogEntry } from "./command-catalog.js";
 import {
   resolveCliCatalogCommandPath,
@@ -7,6 +7,11 @@ import {
 } from "./command-path-policy.js";
 
 describe("command-path-policy", () => {
+  afterEach(() => {
+    vi.doUnmock("./command-catalog.js");
+    vi.resetModules();
+  });
+
   it("resolves status policy with shared startup semantics", () => {
     expect(resolveCliCommandPathPolicy(["status"])).toEqual({
       bypassConfigGuard: false,
@@ -159,7 +164,7 @@ describe("command-path-policy", () => {
     );
   });
 
-  it("uses the longest catalog command path for deep network proxy overrides", () => {
+  it("uses the longest catalog command path for deep network proxy overrides", async () => {
     const catalog: readonly CliCommandCatalogEntry[] = [
       { commandPath: ["nodes"], policy: { networkProxy: "bypass" } },
       {
@@ -169,15 +174,25 @@ describe("command-path-policy", () => {
       },
     ];
 
-    expect(
-      resolveCliCatalogCommandPath(["node", "openclaw", "nodes", "camera", "snap"], catalog),
-    ).toEqual(["nodes", "camera", "snap"]);
-    expect(
-      resolveCliNetworkProxyPolicy(["node", "openclaw", "nodes", "camera", "snap"], catalog),
-    ).toBe("default");
-    expect(
-      resolveCliNetworkProxyPolicy(["node", "openclaw", "nodes", "camera", "list"], catalog),
-    ).toBe("bypass");
+    vi.resetModules();
+    vi.doMock("./command-catalog.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./command-catalog.js")>();
+      return { ...actual, cliCommandCatalog: catalog };
+    });
+    const { resolveCliCatalogCommandPath, resolveCliNetworkProxyPolicy } =
+      await import("./command-path-policy.js");
+
+    expect(resolveCliCatalogCommandPath(["node", "openclaw", "nodes", "camera", "snap"])).toEqual([
+      "nodes",
+      "camera",
+      "snap",
+    ]);
+    expect(resolveCliNetworkProxyPolicy(["node", "openclaw", "nodes", "camera", "snap"])).toBe(
+      "default",
+    );
+    expect(resolveCliNetworkProxyPolicy(["node", "openclaw", "nodes", "camera", "list"])).toBe(
+      "bypass",
+    );
   });
 
   it("stops catalog command path resolution before positional arguments", () => {
