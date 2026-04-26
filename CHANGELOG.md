@@ -6,6 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Gateway/chat: preserve repeated boundary characters in streamed assistant replies so incremental deltas no longer collapse repeated digits, CJK punctuation, markdown emphasis, or table separators. Fixes #63769. Thanks @yon950905 and @mohuaxiao.
 - Exec approvals: accept a symlinked `OPENCLAW_HOME` as the trusted approvals root while still rejecting symlinked `.openclaw` path components below it. (#64663) Thanks @FunJim.
 - Logging: add top-level `hostname`, flattened `message`, and available `agent_id`, `session_id`, and `channel` fields to file-log JSONL records for multi-agent filtering without removing existing structured log arguments. Fixes #51075. Thanks @stevengonsalvez.
 - ACP: route server logs to stderr before Gateway config/bootstrap work so ACP stdout remains JSON-RPC only for IDE integrations. Fixes #49060. Thanks @Hollychou924.
