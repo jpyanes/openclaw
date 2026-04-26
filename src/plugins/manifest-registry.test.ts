@@ -310,7 +310,7 @@ afterEach(() => {
 });
 
 describe("loadPluginManifestRegistry", () => {
-  it("keeps only the higher-precedence plugin for truly distinct duplicates", () => {
+  it("warns for distinct duplicate plugin roots within the same origin", () => {
     const dirA = makeTempDir();
     const dirB = makeTempDir();
     const manifest = { id: "test-plugin", configSchema: { type: "object" } };
@@ -326,7 +326,7 @@ describe("loadPluginManifestRegistry", () => {
       createPluginCandidate({
         idHint: "test-plugin",
         rootDir: dirB,
-        origin: "global",
+        origin: "bundled",
       }),
     ];
 
@@ -336,11 +336,11 @@ describe("loadPluginManifestRegistry", () => {
     expect(registry.plugins[0]?.origin).toBe("bundled");
     expectRegistryDiagnosticContains(
       registry,
-      "global plugin will be overridden by bundled plugin",
+      "bundled plugin root collides with another bundled plugin",
     );
   });
 
-  it("lets config-loaded plugins replace bundled duplicates", () => {
+  it("lets config-loaded plugins replace bundled duplicates without cross-origin warnings", () => {
     const bundledDir = makeTempDir();
     const configDir = makeTempDir();
     const manifest = { id: "config-shadow", configSchema: { type: "object" } };
@@ -360,15 +360,12 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ]);
 
-    expect(countDuplicateWarnings(registry)).toBe(1);
+    expect(countDuplicateWarnings(registry)).toBe(0);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("config");
-    const warning = registry.diagnostics.find((diag) => diag.pluginId === "config-shadow");
-    expect(warning?.source).toBe(path.join(bundledDir, "index.ts"));
-    expect(warning?.message).toContain(path.join(configDir, "index.ts"));
   });
 
-  it("reports explicit installed globals as the effective duplicate winner", () => {
+  it("keeps explicit installed globals as the effective duplicate winner without cross-origin warnings", () => {
     const bundledDir = makeTempDir();
     const globalDir = makeTempDir();
     const manifest = { id: "zalouser", configSchema: { type: "object" } };
@@ -397,11 +394,7 @@ describe("loadPluginManifestRegistry", () => {
       ],
     });
 
-    expect(
-      registry.diagnostics.some((diag) =>
-        diag.message.includes("bundled plugin will be overridden by global plugin"),
-      ),
-    ).toBe(true);
+    expect(countDuplicateWarnings(registry)).toBe(0);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("global");
   });
@@ -1245,28 +1238,60 @@ describe("loadPluginManifestRegistry", () => {
 
   it.each([
     {
-      name: "reports bundled plugins as the duplicate winner for auto-discovered globals",
+      name: "keeps bundled plugins as the duplicate winner for auto-discovered globals",
       registry: () =>
         createDuplicateCandidateRegistry({
           pluginId: "feishu",
           duplicateOrigin: "global",
         }),
-      expectedMessage: "global plugin will be overridden by bundled plugin",
     },
     {
-      name: "reports bundled plugins as the duplicate winner for workspace duplicates",
+      name: "keeps bundled plugins as the duplicate winner for workspace duplicates",
       registry: () =>
         createDuplicateCandidateRegistry({
           pluginId: "shadowed",
           duplicateOrigin: "workspace",
         }),
-      expectedMessage: "workspace plugin will be overridden by bundled plugin",
     },
-  ] as const)("$name", ({ registry: buildRegistry, expectedMessage }) => {
+  ] as const)("$name", ({ registry: buildRegistry }) => {
     const registry = buildRegistry();
-    expectRegistryDiagnosticContains(registry, expectedMessage);
+    expect(countDuplicateWarnings(registry)).toBe(0);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("bundled");
+  });
+
+  it("warns for same-origin duplicates after same-root origin promotion", () => {
+    const promotedDir = makeTempDir();
+    const duplicateDir = makeTempDir();
+    const manifest = { id: "promoted-shadow", configSchema: { type: "object" } };
+    writeManifest(promotedDir, manifest);
+    writeManifest(duplicateDir, manifest);
+
+    const registry = loadRegistry([
+      createPluginCandidate({
+        idHint: "promoted-shadow",
+        rootDir: promotedDir,
+        origin: "bundled",
+      }),
+      createPluginCandidate({
+        idHint: "promoted-shadow",
+        rootDir: promotedDir,
+        origin: "global",
+      }),
+      createPluginCandidate({
+        idHint: "promoted-shadow",
+        rootDir: duplicateDir,
+        origin: "global",
+      }),
+    ]);
+
+    expect(countDuplicateWarnings(registry)).toBe(1);
+    expectRegistryDiagnosticContains(
+      registry,
+      "global plugin root collides with another global plugin",
+    );
+    expect(registry.plugins).toHaveLength(1);
+    expect(registry.plugins[0]?.origin).toBe("global");
   });
 
   it("suppresses duplicate warning when candidates share the same physical directory via symlink", () => {
