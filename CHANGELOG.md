@@ -4,6 +4,10 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+### Fixes
+
+- Doctor: honor `OPENCLAW_SERVICE_REPAIR_POLICY=external` by reporting gateway service health while skipping service install/start/restart/bootstrap, supervisor rewrites, and legacy service cleanup for externally managed environments. Thanks @shakkernerd.
+
 ## 2026.4.25
 
 ### Changes
@@ -82,18 +86,18 @@ Docs: https://docs.openclaw.ai
 - UI/Windows: quote resolved pnpm `.cmd` launcher paths before spawning UI install/build/test commands so Node installs under `C:\Program Files` no longer fail as `C:\Program`. Fixes #45275. Thanks @Kobevictor, @stoppieboy, and @iubns.
 - Codex/agent: translate `--thinking minimal` to `low` for modern Codex models (gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.2) at request build time so the first turn is accepted instead of paying a wasted call + retry-with-low fallback. Older Codex models still receive `minimal` directly. Fixes #71946. Thanks @hclsys.
 - Plugins/uninstall: remove tracked plugin files from their recorded managed extensions root even when the current state directory points somewhere else, so `openclaw plugins uninstall --force` does not leave the plugin discoverable. Thanks @shakkernerd.
-- Agents/runtime: add `agentRuntime.id` as the canonical config key, migrate
-  legacy runtime-policy configs with `openclaw doctor --fix`, and route
-  canonical Anthropic models through `claude-cli` without passing CLI backend
-  aliases to embedded harness selection. Fixes #71957. Thanks @WolvenRA.
+- Agents/runtime: add `agentRuntime.id` as the canonical config key, migrate legacy runtime-policy configs with `openclaw doctor --fix`, route canonical Anthropic models through `claude-cli` without passing CLI backend aliases to embedded harness selection, and load CLI backend owner plugins before channel startup. Fixes #71957. Thanks @WolvenRA.
 - CLI/update: guard Windows scheduled-task stops by state and timeout so auto-update restart cannot hang indefinitely on `schtasks /End` before stale-listener cleanup. Fixes #69970. Thanks @yangswld and @sherlock-huang.
 - Windows install/Lobster: execute `pnpm.exe` directly when `npm_execpath` points at the native pnpm binary, add an installed-package fallback for the Lobster embedded runtime, and include the Lobster runner regression test in Windows CI. Fixes #69456. Thanks @igormf.
 - Gateway/install: refresh loaded gateway service installs when the current service embeds stale gateway auth instead of returning already-installed, avoiding LaunchAgent token-mismatch loops after token rotation. Fixes #70752. Thanks @hyspacex.
 - Update: ignore bundled plugin `.openclaw-install-stage` directories during global install verification and packaged dist pruning so leftover runtime-dep staging files do not turn successful updates into `unexpected packaged dist file` failures. Fixes #71752. Thanks @waynegault.
+- CLI/update: fail package updates when post-update plugin sync fails and refresh legacy npm plugin install records before trusting unchanged artifacts, preventing successful updates from restarting with stale or failed plugin state. Thanks @vincentkoc and @shakkernerd.
+- Release/update: reject pre-populated bundled plugin `.openclaw-install-stage` directories, including mixed-case path variants, before package inventory generation so release tarballs cannot ship poisoned runtime-dependency staging debris. Fixes #71752. Thanks @hclsys.
 - Node runtime: keep node-host retry timers alive across Gateway restarts and exit on terminal credential pauses so supervised nodes do not become silent zombies. Fixes #69800. Thanks @meroli28.
 - Gateway/plugins: stop persisted WhatsApp auth state from activating bundled channel runtime-dependency repair during startup when `channels.whatsapp` is absent, avoiding npm/git stalls on packaged Linux installs. Fixes #71994. Thanks @xiao398008.
 - Gateway/device tokens: enforce caller-scope containment inside token rotation and revocation so pairing-only sessions cannot mutate higher-scope operator tokens. Fixes #71990. Thanks @coygeek.
 - Plugins/channels: keep security checks, thread-binding placement, provider summaries, health formatting, and message action labels on read-only or already-loaded channel metadata instead of importing full channel runtime. Thanks @shakkernerd.
+- Plugins/status: keep config-only channel labels and status security summaries from importing plugin runtime modules just to render metadata. Thanks @shakkernerd.
 - Sessions/channels: stop group-session metadata from loading bundled channel runtime just to classify `#channel` subjects, using only already-loaded channel capabilities on that path. Thanks @shakkernerd.
 - Plugins/channels: keep native command and native skill `auto` defaults on static channel metadata so config, audit, and command-list checks do not load channel runtime just to read those defaults. Thanks @shakkernerd.
 - CLI/channels: keep channel remove selection and all-channel capabilities summaries on read-only plugin metadata, loading channel runtime only for the selected mutation path. Thanks @shakkernerd.

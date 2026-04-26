@@ -13,6 +13,7 @@ import {
   clearPluginCommands,
   clearPluginCommandsForPlugin,
   listPluginInvocationKeys,
+  listProviderPluginCommandSpecs,
   registerPluginCommand,
   validateCommandName,
   validatePluginCommandDefinition,
@@ -22,7 +23,7 @@ import {
   setPluginCommandRegistryLocked,
   type RegisteredPluginCommand,
 } from "./command-registry-state.js";
-import { getPluginCommandSpecs, listProviderPluginCommandSpecs } from "./command-specs.js";
+import { getPluginCommandSpecs } from "./command-specs.js";
 import {
   detachPluginConversationBinding,
   getCurrentPluginConversationBinding,

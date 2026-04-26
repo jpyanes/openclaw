@@ -7,6 +7,7 @@ import {
   clearPluginCommands,
   clearPluginCommandsForPlugin,
   isPluginCommandRegistryLocked,
+  listProviderPluginCommandSpecs,
   pluginCommands,
   type RegisteredPluginCommand,
 } from "./command-registry-state.js";
@@ -195,5 +196,5 @@ export function registerPluginCommand(
   return { ok: true };
 }
 
-export { clearPluginCommands, clearPluginCommandsForPlugin };
+export { clearPluginCommands, clearPluginCommandsForPlugin, listProviderPluginCommandSpecs };
 export type { RegisteredPluginCommand };
