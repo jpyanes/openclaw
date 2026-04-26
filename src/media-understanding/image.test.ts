@@ -124,6 +124,8 @@ describe("describeImageWithModel", () => {
 
   it("routes minimax-portal image models through the MiniMax VLM endpoint", async () => {
     const authStore = { version: 1, profiles: {} };
+    const signal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
     const result = await describeImageWithModel({
       cfg: {},
       agentDir: "/tmp/openclaw-agent",
@@ -133,7 +135,7 @@ describe("describeImageWithModel", () => {
       fileName: "image.png",
       mime: "image/png",
       prompt: "Describe the image.",
-      timeoutMs: 1000,
+      timeoutMs: 12_345,
       authStore,
     });
 
@@ -160,9 +162,10 @@ describe("describeImageWithModel", () => {
           prompt: "Describe the image.",
           image_url: `data:image/png;base64,${Buffer.from("png-bytes").toString("base64")}`,
         }),
-        signal: expect.any(AbortSignal),
+        signal,
       }),
     );
+    expect(timeoutSpy).toHaveBeenCalledWith(12_345);
     expect(completeMock).not.toHaveBeenCalled();
   });
 

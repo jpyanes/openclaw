@@ -80,6 +80,54 @@ describe("minimaxUnderstandImage apiKey normalization", () => {
 
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
+
+  it("uses configured timeoutMs for the VLM fetch signal", async () => {
+    const signal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBe(signal);
+      return new Response(apiResponse, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = withFetchPreconnect(fetchSpy);
+
+    await expect(
+      minimaxUnderstandImage({
+        apiKey: "minimax-test-key",
+        prompt: "hi",
+        imageDataUrl: "data:image/png;base64,AAAA",
+        timeoutMs: 12_345,
+      }),
+    ).resolves.toBe("ok");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(12_345);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the 60s VLM timeout fallback when timeoutMs is unset", async () => {
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(new AbortController().signal);
+    const fetchSpy = vi.fn(async () => {
+      return new Response(apiResponse, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = withFetchPreconnect(fetchSpy);
+
+    await expect(
+      minimaxUnderstandImage({
+        apiKey: "minimax-test-key",
+        prompt: "hi",
+        imageDataUrl: "data:image/png;base64,AAAA",
+      }),
+    ).resolves.toBe("ok");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000);
+  });
 });
 
 describe("isMinimaxVlmModel", () => {
