@@ -21,8 +21,12 @@ calls paired with their matching `toolResult` entries. If a split point lands
 inside a tool block, OpenClaw moves the boundary so the pair stays together and
 the current unsummarized tail is preserved.
 
-The full conversation history stays on disk. Compaction only changes what the
-model sees on the next turn.
+By default, OpenClaw also rewrites the session transcript after compaction and
+removes the message entries that were summarized. The persisted summary and
+recent unsummarized tail remain on disk. Set
+`agents.defaults.compaction.truncateAfterCompaction` to `false` if you need the
+older behavior where compaction only changed what the model saw on the next
+turn and left the full transcript intact.
 
 ## Auto-compaction
 

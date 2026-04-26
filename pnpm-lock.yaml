@@ -1081,9 +1081,6 @@ importers:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
-      '@openclaw/qa-channel':
-        specifier: workspace:*
-        version: link:../qa-channel
       openclaw:
         specifier: workspace:*
         version: link:../..

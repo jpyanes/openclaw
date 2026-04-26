@@ -13,7 +13,6 @@
   },
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*",
-    "@openclaw/qa-channel": "workspace:*",
     "openclaw": "workspace:*"
   },
   "peerDependencies": {

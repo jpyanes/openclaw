@@ -206,6 +206,28 @@ export async function compactEmbeddedPiSession(
         if (
           result.ok &&
           result.compacted &&
+          hookRunner?.hasHooks?.("after_compaction") &&
+          hookRunner.runAfterCompaction
+        ) {
+          try {
+            await hookRunner.runAfterCompaction(
+              {
+                messageCount: -1,
+                compactedCount: -1,
+                tokenCount: result.result?.tokensAfter,
+                sessionFile: params.sessionFile,
+              },
+              hookCtx,
+            );
+          } catch (err) {
+            log.warn("after_compaction hook failed", {
+              errorMessage: formatErrorMessage(err),
+            });
+          }
+        }
+        if (
+          result.ok &&
+          result.compacted &&
           params.config &&
           params.config?.agents?.defaults?.compaction?.truncateAfterCompaction !== false
         ) {
@@ -223,28 +245,6 @@ export async function compactEmbeddedPiSession(
             log.warn("[compaction] post-compaction truncation failed", {
               errorMessage: formatErrorMessage(err),
               errorStack: err instanceof Error ? err.stack : undefined,
-            });
-          }
-        }
-        if (
-          result.ok &&
-          result.compacted &&
-          hookRunner?.hasHooks?.("after_compaction") &&
-          hookRunner.runAfterCompaction
-        ) {
-          try {
-            await hookRunner.runAfterCompaction(
-              {
-                messageCount: -1,
-                compactedCount: -1,
-                tokenCount: result.result?.tokensAfter,
-                sessionFile: params.sessionFile,
-              },
-              hookCtx,
-            );
-          } catch (err) {
-            log.warn("after_compaction hook failed", {
-              errorMessage: formatErrorMessage(err),
             });
           }
         }

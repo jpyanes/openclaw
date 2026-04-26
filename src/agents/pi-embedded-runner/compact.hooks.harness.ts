@@ -87,6 +87,10 @@ function createDefaultSessionMessages(): unknown[] {
 }
 export const sessionMessages: unknown[] = createDefaultSessionMessages();
 export const sessionAbortCompactionMock: Mock<(reason?: unknown) => void> = vi.fn();
+export const truncateSessionAfterCompactionMock = vi.fn(async () => ({
+  truncated: false,
+  entriesRemoved: 0,
+}));
 export const createOpenClawCodingToolsMock = vi.fn(() => []);
 export const resolveEmbeddedAgentStreamFnMock: Mock<
   (params?: unknown) => MockEmbeddedAgentStreamFn
@@ -126,6 +130,11 @@ export function resetCompactSessionStateMocks(): void {
   estimateTokensMock.mockReturnValue(10);
   sessionMessages.splice(0, sessionMessages.length, ...createDefaultSessionMessages());
   sessionAbortCompactionMock.mockReset();
+  truncateSessionAfterCompactionMock.mockReset();
+  truncateSessionAfterCompactionMock.mockResolvedValue({
+    truncated: false,
+    entriesRemoved: 0,
+  });
   resolveEmbeddedAgentStreamFnMock.mockReset();
   resolveEmbeddedAgentStreamFnMock.mockImplementation((_params?: unknown) => vi.fn());
   registerProviderStreamForModelMock.mockReset();
@@ -313,6 +322,10 @@ export async function loadCompactHooksHarness(): Promise<{
   vi.doMock("../session-write-lock.js", () => ({
     acquireSessionWriteLock: vi.fn(async () => ({ release: vi.fn(async () => {}) })),
     resolveSessionLockMaxHoldFromTimeout: vi.fn(() => 0),
+  }));
+
+  vi.doMock("./session-truncation.js", () => ({
+    truncateSessionAfterCompaction: truncateSessionAfterCompactionMock,
   }));
 
   vi.doMock("../../context-engine/init.js", () => ({

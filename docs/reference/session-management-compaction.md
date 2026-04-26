@@ -193,7 +193,12 @@ Notable entry types:
 - `compaction`: persisted compaction summary with `firstKeptEntryId` and `tokensBefore`
 - `branch_summary`: persisted summary when navigating a tree branch
 
-OpenClaw intentionally does **not** “fix up” transcripts; the Gateway uses `SessionManager` to read/write them.
+OpenClaw uses `SessionManager` for normal transcript reads/writes. After
+compaction, the Gateway now defaults to a bounded transcript rewrite that drops
+message entries already covered by the persisted compaction summary while
+keeping non-message session state and the recent unsummarized tail. Set
+`agents.defaults.compaction.truncateAfterCompaction` to `false` to preserve the
+legacy append-only behavior.
 
 ---
 

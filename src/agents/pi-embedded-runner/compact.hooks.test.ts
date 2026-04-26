@@ -23,6 +23,7 @@ import {
   sessionMessages,
   sessionCompactImpl,
   triggerInternalHook,
+  truncateSessionAfterCompactionMock,
 } from "./compact.hooks.harness.js";
 
 let compactEmbeddedPiSessionDirect: typeof import("./compact.js").compactEmbeddedPiSessionDirect;
@@ -750,6 +751,33 @@ describe("compactEmbeddedPiSession hooks (ownsCompaction engine)", () => {
         messageProvider: "telegram",
       }),
     );
+  });
+
+  it("runs after_compaction hooks before post-compaction transcript truncation", async () => {
+    const order: string[] = [];
+    hookRunner.hasHooks.mockReturnValue(true);
+    hookRunner.runAfterCompaction.mockImplementation(async () => {
+      order.push("after_compaction");
+    });
+    truncateSessionAfterCompactionMock.mockImplementation(async () => {
+      order.push("truncate");
+      return { truncated: true, entriesRemoved: 1 };
+    });
+
+    const result = await compactEmbeddedPiSession(
+      wrappedCompactionArgs({
+        config: {
+          agents: {
+            defaults: {
+              compaction: {},
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(order).toEqual(["after_compaction", "truncate"]);
   });
 
   it("emits a transcript update and post-compaction memory sync on the engine-owned path", async () => {
