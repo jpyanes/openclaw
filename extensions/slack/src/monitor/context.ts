@@ -4,6 +4,7 @@ import type {
   OpenClawConfig,
   SlackReactionNotificationMode,
 } from "openclaw/plugin-sdk/config-runtime";
+import { resolveDefaultAgentId } from "openclaw/plugin-sdk/config-runtime";
 import type { SessionScope } from "openclaw/plugin-sdk/config-runtime";
 import type { DmPolicy, GroupPolicy } from "openclaw/plugin-sdk/config-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
@@ -218,6 +219,7 @@ export function createSlackMonitorContext(params: {
       params.sessionScope,
       { From: from, ChatType: chatType, Provider: "slack" },
       params.mainKey,
+      resolveDefaultAgentId(params.cfg),
     );
   };
 
