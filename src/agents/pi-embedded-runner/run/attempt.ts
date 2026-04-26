@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -356,16 +356,16 @@ const MAX_BTW_SNAPSHOT_MESSAGES = 100;
 
 type CoreAgentListener = (event: AgentEvent, signal: AbortSignal) => void | Promise<void>;
 
-function readCoreAgentListeners(agent: unknown): Set<CoreAgentListener> | null {
-  if (!agent || typeof agent !== "object" || !("listeners" in agent)) {
-    return null;
-  }
-  const listeners = (agent as { listeners?: unknown }).listeners;
+function readPrivatePiAgentListeners(agent: Agent): Set<CoreAgentListener> | null {
+  // pi-agent-core 0.70.2 has no public prepend/priority subscribe API.
+  // `listeners` is a private TS field but a normal JS field at runtime; keep
+  // this dependency narrow and guarded until Pi exposes an official seam.
+  const listeners = (agent as unknown as { readonly listeners?: unknown }).listeners;
   return listeners instanceof Set ? (listeners as Set<CoreAgentListener>) : null;
 }
 
-function prependCoreAgentListener(agent: unknown, listener: CoreAgentListener): () => void {
-  const listeners = readCoreAgentListeners(agent);
+function prependPrivatePiAgentListener(agent: Agent, listener: CoreAgentListener): () => void {
+  const listeners = readPrivatePiAgentListeners(agent);
   if (!listeners) {
     return () => {};
   }
@@ -402,17 +402,12 @@ function replaceAssistantWithText(message: AgentMessage, text: string): void {
   message.stopReason = "stop";
 }
 
-export type LlmMessageEndGateState = {
-  consumed: boolean;
-};
-
 export type LlmMessageEndGateConsumption = {
   visibleText: string;
   message: AgentMessage;
 };
 
-export function consumeFirstVisibleAssistantMessageEndGate(
-  state: LlmMessageEndGateState,
+export function selectVisibleAssistantMessageEndGate(
   event: AgentEvent,
   hasHook: boolean,
 ): LlmMessageEndGateConsumption | null {
@@ -421,10 +416,9 @@ export function consumeFirstVisibleAssistantMessageEndGate(
   }
   const message = event.message;
   const visibleText = readAssistantVisibleText(message).trim();
-  if (state.consumed || !visibleText || !hasHook) {
+  if (!visibleText || !hasHook) {
     return null;
   }
-  state.consumed = true;
   return { visibleText, message };
 }
 
@@ -2188,16 +2182,14 @@ export async function runEmbeddedAttempt(
       let llmOutputRetryCount = params.llmOutputRetryCount ?? 0;
       let llmOutputRetryRequested = false;
       let promptErrorSource: EmbeddedRunAttemptResult["promptErrorSource"] = null;
-      const llmMessageEndGateState: LlmMessageEndGateState = { consumed: false };
-      const removeLlmMessageEndGate = prependCoreAgentListener(
+      const removeLlmMessageEndGate = prependPrivatePiAgentListener(
         activeSession.agent,
         async (event, signal) => {
           const activeHookRunner = hookRunner;
           if (!activeHookRunner) {
             return;
           }
-          const gate = consumeFirstVisibleAssistantMessageEndGate(
-            llmMessageEndGateState,
+          const gate = selectVisibleAssistantMessageEndGate(
             event,
             activeHookRunner.hasHooks("llm_message_end"),
           );

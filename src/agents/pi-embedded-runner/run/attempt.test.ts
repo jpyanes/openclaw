@@ -14,7 +14,6 @@ import {
   buildAfterTurnRuntimeContext,
   buildAfterTurnRuntimeContextFromUsage,
   composeSystemPromptWithHookContext,
-  consumeFirstVisibleAssistantMessageEndGate,
   decodeHtmlEntitiesInObject,
   applyEmbeddedAttemptToolsAllow,
   isPrimaryBootstrapRun,
@@ -26,6 +25,7 @@ import {
   resolveEmbeddedAgentBaseStreamFn,
   resolveAttemptFsWorkspaceOnly,
   resolveEmbeddedAgentStreamFn,
+  selectVisibleAssistantMessageEndGate,
   resolveUnknownToolGuardThreshold,
   shouldCreateBundleMcpRuntimeForAttempt,
   resolvePromptBuildHookResult,
@@ -140,33 +140,27 @@ describe("prepareMessageEndRetryContinuation", () => {
   });
 });
 
-describe("consumeFirstVisibleAssistantMessageEndGate", () => {
-  it("consumes only the first visible assistant message_end event", () => {
-    const state = { consumed: false };
-    const first = consumeFirstVisibleAssistantMessageEndGate(
-      state,
+describe("selectVisibleAssistantMessageEndGate", () => {
+  it("selects every visible assistant message_end event", () => {
+    const first = selectVisibleAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("first") },
       true,
     );
-    const second = consumeFirstVisibleAssistantMessageEndGate(
-      state,
+    const second = selectVisibleAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("second") },
       true,
     );
 
     expect(first?.visibleText).toBe("first");
-    expect(second).toBeNull();
+    expect(second?.visibleText).toBe("second");
   });
 
-  it("waits for the first visible assistant text when earlier message_end events have no text", () => {
-    const state = { consumed: false };
-    const empty = consumeFirstVisibleAssistantMessageEndGate(
-      state,
+  it("ignores assistant message_end events with no visible text", () => {
+    const empty = selectVisibleAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("   ") },
       true,
     );
-    const visible = consumeFirstVisibleAssistantMessageEndGate(
-      state,
+    const visible = selectVisibleAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("ready") },
       true,
     );
