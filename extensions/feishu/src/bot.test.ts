@@ -2563,6 +2563,7 @@ describe("handleFeishuMessage command authorization", () => {
       expect.objectContaining({
         replyToMessageId: "om_dm_thread_child",
         rootId: "om_dm_thread_root",
+        skipReplyToInMessages: false,
         replyInThread: true,
         threadReply: true,
       }),
@@ -2598,6 +2599,7 @@ describe("handleFeishuMessage command authorization", () => {
       expect.objectContaining({
         replyToMessageId: "om_dm_quote_reply",
         rootId: "om_dm_quote_root",
+        skipReplyToInMessages: true,
         replyInThread: false,
         threadReply: false,
       }),
