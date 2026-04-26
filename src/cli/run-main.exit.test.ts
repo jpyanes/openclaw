@@ -1,7 +1,7 @@
 import process from "node:process";
 import { CommanderError } from "commander";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runCli } from "./run-main.js";
+import { runCli, shouldStartProxyForCli } from "./run-main.js";
 
 const tryRouteCliMock = vi.hoisted(() => vi.fn());
 const loadDotEnvMock = vi.hoisted(() => vi.fn());
@@ -193,6 +193,53 @@ describe("runCli exit behavior", () => {
 
     expect(startProxyMock).not.toHaveBeenCalled();
     expect(stopProxyMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["gateway runtime", ["node", "openclaw", "gateway", "run"]],
+    ["bare gateway runtime", ["node", "openclaw", "gateway"]],
+    ["node runtime", ["node", "openclaw", "node", "run"]],
+    ["local agent runtime", ["node", "openclaw", "agent", "--local"]],
+    ["provider inference", ["node", "openclaw", "infer", "web", "fetch", "https://example.com"]],
+    ["model command", ["node", "openclaw", "models", "auth", "login", "openai"]],
+    ["plugin command", ["node", "openclaw", "plugins", "marketplace", "list"]],
+    ["skill command", ["node", "openclaw", "skills", "search", "browser"]],
+    ["update command", ["node", "openclaw", "update", "check"]],
+    ["channel probe", ["node", "openclaw", "channels", "status", "--probe"]],
+    ["channel capabilities probe", ["node", "openclaw", "channels", "capabilities"]],
+    ["directory plugin command", ["node", "openclaw", "directory", "peers", "list"]],
+    ["message plugin command", ["node", "openclaw", "message", "send", "--to", "demo"]],
+    ["unknown plugin command", ["node", "openclaw", "googlemeet", "login"]],
+  ])("starts proxy routing for %s", (_name, argv) => {
+    expect(shouldStartProxyForCli(argv)).toBe(true);
+  });
+
+  it.each([
+    ["root help", ["node", "openclaw", "--help"]],
+    ["root version", ["node", "openclaw", "--version"]],
+    ["status", ["node", "openclaw", "status"]],
+    ["health", ["node", "openclaw", "health"]],
+    ["gateway status", ["node", "openclaw", "gateway", "status"]],
+    ["gateway health", ["node", "openclaw", "gateway", "health"]],
+    ["remote agent control-plane", ["node", "openclaw", "agent", "run"]],
+    ["chat control-plane", ["node", "openclaw", "chat"]],
+    ["terminal control-plane", ["node", "openclaw", "terminal"]],
+    ["config", ["node", "openclaw", "config", "get", "proxy.enabled"]],
+    ["completion", ["node", "openclaw", "completion", "zsh"]],
+    ["debug proxy cli", ["node", "openclaw", "proxy", "start"]],
+    ["agents list", ["node", "openclaw", "agents", "list"]],
+    ["models list", ["node", "openclaw", "models", "list"]],
+    ["models status without live probe", ["node", "openclaw", "models", "status"]],
+  ])("skips proxy routing for %s", (_name, argv) => {
+    expect(shouldStartProxyForCli(argv)).toBe(false);
+  });
+
+  it("starts the proxy for network-capable commands by default", async () => {
+    tryRouteCliMock.mockResolvedValueOnce(true);
+
+    await runCli(["node", "openclaw", "plugins", "marketplace", "list"]);
+
+    expect(startProxyMock).toHaveBeenCalledWith(undefined);
   });
 
   it("stops the proxy after normal gateway runtime completion", async () => {
