@@ -271,8 +271,8 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
   { commandPath: ["skills"], exact: true, policy: { networkProxy: "bypass" } },
   { commandPath: ["skills", "check"], exact: true, policy: { networkProxy: "bypass" } },
   { commandPath: ["skills", "info"], exact: true, policy: { networkProxy: "bypass" } },
-  { commandPath: ["skills", "install"], exact: true, policy: { networkProxy: "default" } },
+  { commandPath: ["skills", "install"], exact: true },
   { commandPath: ["skills", "list"], exact: true, policy: { networkProxy: "bypass" } },
-  { commandPath: ["skills", "search"], exact: true, policy: { networkProxy: "default" } },
-  { commandPath: ["skills", "update"], exact: true, policy: { networkProxy: "default" } },
+  { commandPath: ["skills", "search"], exact: true },
+  { commandPath: ["skills", "update"], exact: true },
 ];

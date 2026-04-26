@@ -34,10 +34,6 @@ export function resolveCliCommandPathPolicy(commandPath: string[]): CliCommandPa
   return resolvedPolicy;
 }
 
-function getCliCommandTokens(argv: string[]): string[] {
-  return getCommandPathWithRootOptions(argv, argv.length);
-}
-
 function isCommandPathPrefix(commandPath: string[], pattern: readonly string[]): boolean {
   return pattern.every((segment, index) => commandPath[index] === segment);
 }
@@ -46,7 +42,7 @@ export function resolveCliCatalogCommandPath(
   argv: string[],
   catalog: readonly CliCommandCatalogEntry[] = cliCommandCatalog,
 ): string[] {
-  const tokens = getCliCommandTokens(argv);
+  const tokens = getCommandPathWithRootOptions(argv, argv.length);
   if (tokens.length === 0) {
     return [];
   }
