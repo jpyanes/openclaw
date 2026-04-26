@@ -38,6 +38,7 @@ function createWsClient(): MockWsClient {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   stopFeishuMonitorState();
   vi.clearAllMocks();
 });
@@ -77,6 +78,54 @@ describe("feishu websocket cleanup", () => {
     expect(wsClients.has(accountId)).toBe(false);
     expect(botOpenIds.has(accountId)).toBe(false);
     expect(botNames.has(accountId)).toBe(false);
+  });
+
+  it("retries with backoff after websocket start rejects", async () => {
+    vi.useFakeTimers();
+    const failedClient = createWsClient();
+    failedClient.start.mockRejectedValueOnce(new Error("connect failed"));
+    const recoveredClient = createWsClient();
+    createFeishuWSClientMock
+      .mockResolvedValueOnce(failedClient)
+      .mockResolvedValueOnce(recoveredClient);
+
+    const abortController = new AbortController();
+    const runtime = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+    const accountId = "retry";
+
+    const monitorPromise = monitorWebSocket({
+      account: createAccount(accountId),
+      accountId,
+      runtime,
+      abortSignal: abortController.signal,
+      eventDispatcher: {} as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(failedClient.start).toHaveBeenCalledTimes(1);
+      expect(failedClient.close).toHaveBeenCalledTimes(1);
+      expect(wsClients.has(accountId)).toBe(false);
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await vi.waitFor(() => {
+      expect(recoveredClient.start).toHaveBeenCalledTimes(1);
+      expect(wsClients.get(accountId)).toBe(recoveredClient);
+    });
+
+    abortController.abort();
+    await monitorPromise;
+
+    expect(createFeishuWSClientMock).toHaveBeenCalledTimes(2);
+    expect(recoveredClient.close).toHaveBeenCalledTimes(1);
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("WebSocket start failed, retrying in 1000ms"),
+    );
   });
 
   it("closes targeted websocket clients during stop cleanup", () => {

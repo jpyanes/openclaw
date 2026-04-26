@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import * as http from "node:http";
 import * as Lark from "@larksuiteoapi/node-sdk";
+import { waitForAbortableDelay } from "./async.js";
 import { createFeishuWSClient } from "./client.js";
 import {
   applyBasicWebhookRequestGuards,
@@ -28,6 +29,9 @@ export type MonitorTransportParams = {
   abortSignal?: AbortSignal;
   eventDispatcher: Lark.EventDispatcher;
 };
+
+const FEISHU_WS_RECONNECT_INITIAL_DELAY_MS = 1_000;
+const FEISHU_WS_RECONNECT_MAX_DELAY_MS = 30_000;
 
 function isFeishuWebhookPayload(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -82,6 +86,40 @@ function respondText(res: http.ServerResponse, statusCode: number, body: string)
   res.end(body);
 }
 
+function getFeishuWsReconnectDelayMs(attempt: number): number {
+  return Math.min(
+    FEISHU_WS_RECONNECT_INITIAL_DELAY_MS * 2 ** Math.max(0, attempt - 1),
+    FEISHU_WS_RECONNECT_MAX_DELAY_MS,
+  );
+}
+
+function cleanupFeishuWsClient(params: {
+  accountId: string;
+  wsClient?: Lark.WSClient;
+  error: (message: string) => void;
+}): void {
+  const { accountId, wsClient, error } = params;
+  if (wsClient) {
+    try {
+      wsClient.close();
+    } catch (err) {
+      error(`feishu[${accountId}]: error closing WebSocket client: ${String(err)}`);
+    }
+  }
+  wsClients.delete(accountId);
+  botOpenIds.delete(accountId);
+  botNames.delete(accountId);
+}
+
+function waitForFeishuWsAbort(abortSignal?: AbortSignal): Promise<void> {
+  if (abortSignal?.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 export async function monitorWebSocket({
   account,
   accountId,
@@ -91,53 +129,46 @@ export async function monitorWebSocket({
 }: MonitorTransportParams): Promise<void> {
   const log = runtime?.log ?? console.log;
   const error = runtime?.error ?? console.error;
-  log(`feishu[${accountId}]: starting WebSocket connection...`);
 
-  const wsClient = await createFeishuWSClient(account);
-  wsClients.set(accountId, wsClient);
-
-  return new Promise((resolve, reject) => {
-    let cleanedUp = false;
-
-    const cleanup = () => {
-      if (cleanedUp) {
-        return;
-      }
-      cleanedUp = true;
-      abortSignal?.removeEventListener("abort", handleAbort);
-      try {
-        wsClient.close();
-      } catch (err) {
-        error(`feishu[${accountId}]: error closing WebSocket client: ${String(err)}`);
-      } finally {
-        wsClients.delete(accountId);
-        botOpenIds.delete(accountId);
-        botNames.delete(accountId);
-      }
-    };
-
-    function handleAbort() {
-      log(`feishu[${accountId}]: abort signal received, stopping`);
-      cleanup();
-      resolve();
-    }
-
+  let attempt = 0;
+  while (true) {
     if (abortSignal?.aborted) {
-      cleanup();
-      resolve();
-      return;
+      break;
     }
 
-    abortSignal?.addEventListener("abort", handleAbort, { once: true });
-
+    let wsClient: Lark.WSClient | undefined;
     try {
-      void wsClient.start({ eventDispatcher });
+      log(`feishu[${accountId}]: starting WebSocket connection...`);
+      wsClient = await createFeishuWSClient(account);
+      if (abortSignal?.aborted) {
+        cleanupFeishuWsClient({ accountId, wsClient, error });
+        break;
+      }
+      wsClients.set(accountId, wsClient);
+      await wsClient.start({ eventDispatcher });
+      attempt = 0;
       log(`feishu[${accountId}]: WebSocket client started`);
+      await waitForFeishuWsAbort(abortSignal);
+      log(`feishu[${accountId}]: abort signal received, stopping`);
+      cleanupFeishuWsClient({ accountId, wsClient, error });
+      return;
     } catch (err) {
-      cleanup();
-      reject(err);
+      cleanupFeishuWsClient({ accountId, wsClient, error });
+      if (abortSignal?.aborted) {
+        break;
+      }
+
+      attempt += 1;
+      const delayMs = getFeishuWsReconnectDelayMs(attempt);
+      error(
+        `feishu[${accountId}]: WebSocket start failed, retrying in ${delayMs}ms: ${String(err)}`,
+      );
+      const shouldRetry = await waitForAbortableDelay(delayMs, abortSignal);
+      if (!shouldRetry) {
+        break;
+      }
     }
-  });
+  }
 }
 
 export async function monitorWebhook({
