@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
+import { createWindowsOutputDecoder } from "../../../infra/windows-encoding.js";
 import { killProcessTree } from "../../kill-tree.js";
 import { prepareOomScoreAdjustedSpawn } from "../../linux-oom-score.js";
 import { spawnWithFallback } from "../../spawn-utils.js";
@@ -108,16 +109,51 @@ export async function createChildAdapter(params: {
       }
     : undefined;
 
+  const stdoutDecoder = createWindowsOutputDecoder();
+  const stderrDecoder = createWindowsOutputDecoder();
+
   const onStdout = (listener: (chunk: string) => void) => {
+    let flushed = false;
+    const flush = () => {
+      if (flushed) {
+        return;
+      }
+      flushed = true;
+      const tail = stdoutDecoder.flush();
+      if (tail) {
+        listener(tail);
+      }
+    };
     child.stdout.on("data", (chunk) => {
-      listener(chunk.toString());
+      const text = stdoutDecoder.decode(chunk);
+      if (text) {
+        listener(text);
+      }
     });
+    child.stdout.once("end", flush);
+    child.stdout.once("close", flush);
   };
 
   const onStderr = (listener: (chunk: string) => void) => {
+    let flushed = false;
+    const flush = () => {
+      if (flushed) {
+        return;
+      }
+      flushed = true;
+      const tail = stderrDecoder.flush();
+      if (tail) {
+        listener(tail);
+      }
+    };
     child.stderr.on("data", (chunk) => {
-      listener(chunk.toString());
+      const text = stderrDecoder.decode(chunk);
+      if (text) {
+        listener(text);
+      }
     });
+    child.stderr.once("end", flush);
+    child.stderr.once("close", flush);
   };
 
   let waitResult: { code: number | null; signal: NodeJS.Signals | null } | null = null;
