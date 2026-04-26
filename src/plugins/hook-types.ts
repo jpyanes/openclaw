@@ -224,7 +224,15 @@ export type PluginHookLlmOutputEvent = {
   };
 };
 
-export type PluginHookLlmMessageEndEvent = PluginHookLlmOutputEvent;
+export type PluginHookLlmMessageEndEvent = PluginHookLlmOutputEvent & {
+  /**
+   * Raw Pi lifecycle event for this message boundary.
+   *
+   * Kept as unknown because plugin hooks should not depend on Pi internals for
+   * type safety, but advanced policies may inspect provider/tool-call metadata.
+   */
+  agentEvent?: unknown;
+};
 
 export type PluginHookAgentEndEvent = {
   runId?: string;

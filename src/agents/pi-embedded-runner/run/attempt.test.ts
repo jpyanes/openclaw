@@ -15,6 +15,7 @@ import {
   buildAfterTurnRuntimeContextFromUsage,
   composeSystemPromptWithHookContext,
   decodeHtmlEntitiesInObject,
+  formatMessageEndRetryExhaustedBlockMessage,
   applyEmbeddedAttemptToolsAllow,
   isPrimaryBootstrapRun,
   mergeOrphanedTrailingUserPrompt,
@@ -142,16 +143,15 @@ describe("prepareMessageEndRetryContinuation", () => {
 
 describe("selectVisibleAssistantMessageEndGate", () => {
   it("selects every visible assistant message_end event", () => {
-    const first = selectVisibleAssistantMessageEndGate(
-      { type: "message_end", message: assistantTextMessage("first") },
-      true,
-    );
+    const firstEvent = { type: "message_end", message: assistantTextMessage("first") } as const;
+    const first = selectVisibleAssistantMessageEndGate(firstEvent, true);
     const second = selectVisibleAssistantMessageEndGate(
       { type: "message_end", message: assistantTextMessage("second") },
       true,
     );
 
     expect(first?.visibleText).toBe("first");
+    expect(first?.agentEvent).toBe(firstEvent);
     expect(second?.visibleText).toBe("second");
   });
 
@@ -167,6 +167,21 @@ describe("selectVisibleAssistantMessageEndGate", () => {
 
     expect(empty).toBeNull();
     expect(visible?.visibleText).toBe("ready");
+  });
+});
+
+describe("formatMessageEndRetryExhaustedBlockMessage", () => {
+  it("uses a plain retry exhaustion message without emoji", () => {
+    expect(
+      formatMessageEndRetryExhaustedBlockMessage({
+        retryCount: 2,
+        reason: "policy still blocked the answer",
+      }),
+    ).toBe(
+      "Response blocked after 2 retries.\n" +
+        "Reason: policy still blocked the answer\n" +
+        "Logs: openclaw logs --follow",
+    );
   });
 });
 

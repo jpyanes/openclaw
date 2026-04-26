@@ -405,6 +405,7 @@ function replaceAssistantWithText(message: AgentMessage, text: string): void {
 export type LlmMessageEndGateConsumption = {
   visibleText: string;
   message: AgentMessage;
+  agentEvent: AgentEvent;
 };
 
 export function selectVisibleAssistantMessageEndGate(
@@ -419,7 +420,19 @@ export function selectVisibleAssistantMessageEndGate(
   if (!visibleText || !hasHook) {
     return null;
   }
-  return { visibleText, message };
+  return { visibleText, message, agentEvent: event };
+}
+
+export function formatMessageEndRetryExhaustedBlockMessage(params: {
+  retryCount: number;
+  reason?: string;
+}): string {
+  const retryLabel = params.retryCount === 1 ? "retry" : "retries";
+  const reason = params.reason?.trim() ? params.reason : "blocked by hook";
+  return (
+    `Response blocked after ${params.retryCount} ${retryLabel}.\n` +
+    `Reason: ${reason}\nLogs: openclaw logs --follow`
+  );
 }
 
 type MessageEndRetrySessionManager = Pick<
@@ -2202,6 +2215,7 @@ export async function runEmbeddedAttempt(
               sessionId: params.sessionId,
               provider: params.provider,
               model: params.modelId,
+              agentEvent: gate.agentEvent,
               prompt: finalPromptText ?? params.prompt,
               assistantTexts: [gate.visibleText],
               lastAssistant: gate.message,
@@ -2268,8 +2282,10 @@ export async function runEmbeddedAttempt(
               return;
             }
             replacement = wantsRetry
-              ? `⚠️ Response blocked after ${llmOutputRetryCount} ${llmOutputRetryCount === 1 ? "retry" : "retries"}.\n` +
-                `Reason: ${decision.reason}\nLogs: openclaw logs --follow`
+              ? formatMessageEndRetryExhaustedBlockMessage({
+                  retryCount: llmOutputRetryCount,
+                  reason: decision.reason,
+                })
               : resolveBlockMessage(decision);
           }
           replaceAssistantWithText(gate.message, replacement);
