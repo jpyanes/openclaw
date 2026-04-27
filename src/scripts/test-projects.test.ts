@@ -74,6 +74,11 @@ const {
     args: string[],
     cwd?: string,
     listChangedPaths?: (baseRef: string, cwd: string) => string[],
+    options?: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      broad?: boolean;
+    },
   ) => string[] | null;
   resolveChangedTestTargetPlan: (
     changedPaths: string[],
