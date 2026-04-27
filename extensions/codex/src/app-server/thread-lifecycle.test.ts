@@ -77,14 +77,5 @@ describe("buildDeveloperInstructions", () => {
     expect(prompt).toContain(
       "When replying in the current chat/session, answer normally and let OpenClaw deliver that reply automatically.",
     );
-    expect(prompt).toContain("Do not shell out to provider CLIs for same-session replies.");
-  });
-
-  it("keeps messaging tools for proactive or alternate-target delivery", () => {
-    const prompt = buildDeveloperInstructions(createAttemptParams());
-
-    expect(prompt).toContain(
-      "Use the OpenClaw messaging tool only for proactive sends, different targets, channel actions, or explicit media delivery needs.",
-    );
   });
 });

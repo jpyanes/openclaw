@@ -226,8 +226,6 @@ export function buildDeveloperInstructions(params: EmbeddedRunAttemptParams): st
     [
       "Preserve the user's existing channel/session context.",
       "When replying in the current chat/session, answer normally and let OpenClaw deliver that reply automatically.",
-      "Use the OpenClaw messaging tool only for proactive sends, different targets, channel actions, or explicit media delivery needs.",
-      "Do not shell out to provider CLIs for same-session replies.",
     ].join(" "),
     promptOverlay,
     params.extraSystemPrompt,
