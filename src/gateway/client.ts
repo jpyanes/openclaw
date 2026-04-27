@@ -13,6 +13,7 @@ import {
   publicKeyRawBase64UrlFromPem,
   signDevicePayload,
 } from "../infra/device-identity.js";
+import { dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane } from "../infra/net/proxy/proxy-lifecycle.js";
 import { normalizeFingerprint } from "../infra/tls/fingerprint.js";
 import { rawDataToString } from "../infra/ws.js";
 import { logDebug, logError } from "../logger.js";
@@ -297,7 +298,10 @@ export class GatewayClient {
         return undefined;
       };
     }
-    const ws = new WebSocket(url, wsOptions as ClientOptions);
+    const createWebSocket = () => new WebSocket(url, wsOptions as ClientOptions);
+    const ws = directAgent
+      ? dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane(url, createWebSocket)
+      : createWebSocket();
     this.ws = ws;
     this.socketOpened = false;
     this.connectNonce = null;

@@ -84,7 +84,7 @@ function injectProxyEnv(proxyUrl: string): ProxyEnvSnapshot {
   for (const key of GLOBAL_AGENT_PROXY_KEYS) {
     process.env[key] = proxyUrl;
   }
-  process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"] = "false";
+  process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"] = "true";
   process.env["OPENCLAW_PROXY_ACTIVE"] = "1";
   for (const key of NO_PROXY_ENV_KEYS) {
     process.env[key] = "";
@@ -178,12 +178,21 @@ function isSupportedProxyUrl(value: string): boolean {
   }
 }
 
-function resolveProxyUrl(config: ProxyConfig | undefined): string | null {
+function resolveProxyUrl(config: ProxyConfig | undefined): string {
   const candidate = config?.proxyUrl?.trim() || process.env["OPENCLAW_PROXY_URL"]?.trim();
   if (!candidate) {
-    return null;
+    throw new Error(
+      "proxy: enabled but no HTTP proxy URL is configured; set proxy.proxyUrl " +
+        "or OPENCLAW_PROXY_URL to an http:// forward proxy.",
+    );
   }
-  return isSupportedProxyUrl(candidate) ? candidate : null;
+  if (!isSupportedProxyUrl(candidate)) {
+    throw new Error(
+      "proxy: enabled but proxy URL is invalid; set proxy.proxyUrl " +
+        "or OPENCLAW_PROXY_URL to an http:// forward proxy.",
+    );
+  }
+  return candidate;
 }
 
 function redactProxyUrlForLog(value: string): string {
@@ -201,14 +210,6 @@ export async function startProxy(config: ProxyConfig | undefined): Promise<Proxy
   }
 
   const proxyUrl = resolveProxyUrl(config);
-  if (proxyUrl === null) {
-    logWarn(
-      "proxy: enabled but no HTTP proxy URL is configured; set proxy.proxyUrl " +
-        "or OPENCLAW_PROXY_URL to an http:// forward proxy. Using application-level SSRF guards only.",
-    );
-    return null;
-  }
-
   const startupEnvSnapshot = captureProxyEnv();
   let injectedEnvSnapshot: ProxyEnvSnapshot | null = null;
 
@@ -240,10 +241,9 @@ export async function startProxy(config: ProxyConfig | undefined): Promise<Proxy
     bootstrapNodeHttpStack(proxyUrl);
   } catch (err) {
     restoreRuntime();
-    logWarn(
-      `proxy: failed to activate external proxy routing - using application-level SSRF guards only. Reason: ${String(err)}`,
-    );
-    return null;
+    throw new Error(`proxy: failed to activate external proxy routing: ${String(err)}`, {
+      cause: err,
+    });
   }
 
   logInfo(
@@ -270,4 +270,74 @@ export async function stopProxy(handle: ProxyHandle | null): Promise<void> {
     return;
   }
   await handle.stop();
+}
+
+function isGatewayLoopbackControlPlaneUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "ws:" &&
+    url.protocol !== "wss:" &&
+    url.protocol !== "http:" &&
+    url.protocol !== "https:"
+  ) {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+export function dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane<T>(
+  url: string,
+  run: () => T,
+): T {
+  if (!isGatewayLoopbackControlPlaneUrl(url)) {
+    throw new Error("proxy: dangerous Gateway control-plane bypass is loopback-only");
+  }
+
+  const snapshot = nodeHttpStackSnapshot;
+  if (!snapshot) {
+    return run();
+  }
+
+  // Security-sensitive: this temporarily removes managed proxy hooks for the
+  // synchronous Gateway loopback WebSocket constructor only. Do not reuse this
+  // helper for provider, plugin, user WebUI, model server, or arbitrary egress.
+  const activeStack = captureNodeHttpStack();
+  const globalRecord = global as Record<string, unknown>;
+  try {
+    http.request = snapshot.httpRequest;
+    http.get = snapshot.httpGet;
+    http.globalAgent = snapshot.httpGlobalAgent;
+    https.request = snapshot.httpsRequest;
+    https.get = snapshot.httpsGet;
+    https.globalAgent = snapshot.httpsGlobalAgent;
+    if (snapshot.hadGlobalAgent) {
+      globalRecord["GLOBAL_AGENT"] = snapshot.globalAgent;
+    } else {
+      delete globalRecord["GLOBAL_AGENT"];
+    }
+    return run();
+  } finally {
+    http.request = activeStack.httpRequest;
+    http.get = activeStack.httpGet;
+    http.globalAgent = activeStack.httpGlobalAgent;
+    https.request = activeStack.httpsRequest;
+    https.get = activeStack.httpsGet;
+    https.globalAgent = activeStack.httpsGlobalAgent;
+    if (activeStack.hadGlobalAgent) {
+      globalRecord["GLOBAL_AGENT"] = activeStack.globalAgent;
+    } else {
+      delete globalRecord["GLOBAL_AGENT"];
+    }
+  }
 }

@@ -235,11 +235,9 @@ export async function runCli(argv: string[] = process.argv) {
   // Enforce the minimum supported runtime before doing any work.
   assertSupportedRuntime();
 
-  // Activate external network-level proxy routing for network-capable commands.
+  // Activate operator-managed proxy routing for network-capable commands.
   // Local Gateway/control-plane commands keep direct loopback access while
   // runtime, provider, plugin, update, and unknown plugin commands route egress.
-  // If config can't be loaded or no proxy URL is configured, application-level
-  // guards remain active.
   // The handle is captured so we can restore process proxy state on exit.
   let proxyHandle: ProxyHandle | null = null;
   const stopStartedProxy = async () => {
@@ -254,16 +252,10 @@ export async function runCli(argv: string[] = process.argv) {
     proxyHandle = null;
     handle?.kill("SIGTERM");
   };
-  try {
-    if (shouldStartProxyForCli(normalizedArgv)) {
-      const { loadConfig } = await import("../config/io.js");
-      const config = loadConfig();
-      proxyHandle = await startProxy(config?.proxy ?? undefined);
-    }
-  } catch {
-    // Config load may fail for many CLI commands that don't need it (e.g.
-    // help, version). Don't block startup — application-level guards remain.
-    proxyHandle = null;
+  if (shouldStartProxyForCli(normalizedArgv)) {
+    const { loadConfig } = await import("../config/io.js");
+    const config = loadConfig();
+    proxyHandle = await startProxy(config?.proxy ?? undefined);
   }
   // Graceful shutdown - restore proxy routing when openclaw exits via any signal.
   let onSigterm: (() => void) | null = null;

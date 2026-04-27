@@ -170,13 +170,14 @@ export function resetGlobalUndiciStreamTimeoutsForTests(): void {
 export function forceResetGlobalDispatcher(): void {
   lastAppliedTimeoutKey = null;
   lastAppliedProxyBootstrap = false;
-  if (!hasEnvHttpProxyConfigured("https") && resolveCurrentDispatcherKind() === "env-proxy") {
-    try {
+  try {
+    if (hasEnvHttpProxyConfigured("https")) {
+      setGlobalDispatcher(new EnvHttpProxyAgent());
+      lastAppliedProxyBootstrap = true;
+    } else {
       setGlobalDispatcher(new Agent());
-    } catch {
-      // Best-effort reset only.
     }
-    return;
+  } catch {
+    // Best-effort reset only.
   }
-  ensureGlobalUndiciEnvProxyDispatcher();
 }

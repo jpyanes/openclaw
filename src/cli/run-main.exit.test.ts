@@ -250,6 +250,30 @@ describe("runCli exit behavior", () => {
     expect(startProxyMock).toHaveBeenCalledWith(undefined);
   });
 
+  it("fails protected commands when proxy activation fails", async () => {
+    startProxyMock.mockRejectedValueOnce(new Error("proxy: enabled but no HTTP proxy URL"));
+
+    await expect(runCli(["node", "openclaw", "gateway", "run"])).rejects.toThrow(
+      "proxy: enabled but no HTTP proxy URL",
+    );
+
+    expect(tryRouteCliMock).not.toHaveBeenCalled();
+    expect(stopProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("fails protected commands when config cannot be loaded for proxy startup", async () => {
+    loadConfigMock.mockImplementationOnce(() => {
+      throw new Error("config parse failed");
+    });
+
+    await expect(runCli(["node", "openclaw", "gateway", "run"])).rejects.toThrow(
+      "config parse failed",
+    );
+
+    expect(startProxyMock).not.toHaveBeenCalled();
+    expect(tryRouteCliMock).not.toHaveBeenCalled();
+  });
+
   it("stops the proxy after normal gateway runtime completion", async () => {
     const handle = makeProxyHandle();
     startProxyMock.mockResolvedValueOnce(handle);

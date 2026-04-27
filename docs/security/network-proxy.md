@@ -1,5 +1,5 @@
 ---
-summary: "How to route OpenClaw runtime HTTP traffic through an operator-managed filtering proxy"
+summary: "How to route OpenClaw runtime HTTP and WebSocket traffic through an operator-managed filtering proxy"
 title: "Network proxy"
 read_when:
   - You want defense-in-depth against SSRF and DNS rebinding attacks
@@ -8,47 +8,41 @@ read_when:
 
 # Network Proxy
 
-OpenClaw can route runtime HTTP traffic through an operator-managed forward proxy. This is optional defense in depth for deployments that want central egress control, stronger SSRF protection, and better network auditability.
+OpenClaw can route runtime HTTP and WebSocket traffic through an operator-managed forward proxy. This is optional defense in depth for deployments that want central egress control, stronger SSRF protection, and better network auditability.
 
-OpenClaw does not ship, download, start, configure, or certify a proxy. You run the proxy technology that fits your environment, and OpenClaw routes process-local HTTP clients through it.
+OpenClaw does not ship, download, start, configure, or certify a proxy. You run the proxy technology that fits your environment, and OpenClaw routes normal process-local HTTP and WebSocket clients through it.
 
 ## Why Use a Proxy?
 
-A proxy gives operators one network control point for outbound HTTP traffic. That can be useful even outside SSRF hardening:
+A proxy gives operators one network control point for outbound HTTP and WebSocket traffic. That can be useful even outside SSRF hardening:
 
 - Central policy: maintain one egress policy instead of relying on every application HTTP call site to get network rules right.
 - Connect-time checks: evaluate the destination after DNS resolution and immediately before the proxy opens the upstream connection.
 - DNS rebinding defense: reduce the gap between an application-level DNS check and the actual outbound connection.
-- Broader JavaScript coverage: route ordinary `fetch`, `undici`, `node:http`, `node:https`, axios, got, node-fetch, and similar clients through the same path.
+- Broader JavaScript coverage: route ordinary `fetch`, `node:http`, `node:https`, WebSocket, axios, got, node-fetch, and similar clients through the same path.
 - Auditability: log allowed and denied destinations at the egress boundary.
 - Operational control: enforce destination rules, network segmentation, rate limits, or outbound allowlists without rebuilding OpenClaw.
 
-OpenClaw still keeps application-level SSRF guards such as `fetchWithSsrFGuard`. The proxy is an additional network layer for runtime traffic, not a replacement for guarded fetches.
+OpenClaw still keeps application-level SSRF guards such as `fetchWithSsrFGuard`. Proxy routing is an additional process-level guardrail for normal HTTP and WebSocket egress, not a replacement for guarded fetches or an OS-level network sandbox.
 
 ## How OpenClaw Routes Traffic
 
-When `proxy.enabled=true` and a proxy URL is configured, OpenClaw injects proxy settings for protected runtime processes such as `openclaw gateway run`, `openclaw node run`, and `openclaw agent --local`:
+When `proxy.enabled=true` and a proxy URL is configured, protected runtime processes such as `openclaw gateway run`, `openclaw node run`, and `openclaw agent --local` route normal HTTP and WebSocket egress through the configured proxy:
 
 ```text
 OpenClaw process
-  fetch and undici       -> operator-managed filtering proxy -> public internet
+  fetch                  -> operator-managed filtering proxy -> public internet
   node:http and https    -> operator-managed filtering proxy -> public internet
+  WebSocket clients      -> operator-managed filtering proxy -> public internet
 ```
 
-OpenClaw activates two routing layers:
-
-| Layer | Mechanism                                      | Covers                                                                 |
-| ----- | ---------------------------------------------- | ---------------------------------------------------------------------- |
-| A     | undici global dispatcher via proxy environment | `fetch()` and direct `undici.request()` calls                          |
-| B     | `global-agent` bootstrap                       | `node:http`, `node:https`, axios, got, node-fetch, and similar clients |
-
-OpenClaw Gateway control-plane WebSocket clients use direct transport for local Gateway RPC traffic. That control-plane path must be able to reach loopback Gateways even when the operator proxy blocks loopback destinations. Normal runtime HTTP requests still use the configured proxy.
+The public contract is the routing behavior, not the internal Node hooks used to implement it. OpenClaw Gateway control-plane WebSocket clients use a narrow direct path for local loopback Gateway RPC traffic. That control-plane path must be able to reach loopback Gateways even when the operator proxy blocks loopback destinations. Normal runtime HTTP and WebSocket requests still use the configured proxy.
 
 The proxy URL itself must use `http://`. HTTPS destinations are still supported through the proxy with HTTP `CONNECT`; this only means OpenClaw expects a plain HTTP forward-proxy listener such as `http://127.0.0.1:3128`.
 
 While the proxy is active, OpenClaw clears `no_proxy`, `NO_PROXY`, and `GLOBAL_AGENT_NO_PROXY`. Those bypass lists are destination-based, so leaving `localhost` or `127.0.0.1` there would let high-risk SSRF targets skip the filtering proxy.
 
-On shutdown, OpenClaw restores the previous proxy environment and resets cached undici and `global-agent` routing state.
+On shutdown, OpenClaw restores the previous proxy environment and resets cached process routing state.
 
 ## Configuration
 
@@ -66,7 +60,7 @@ OPENCLAW_PROXY_URL=http://127.0.0.1:3128 openclaw gateway run
 
 `proxy.proxyUrl` takes precedence over `OPENCLAW_PROXY_URL`.
 
-If `enabled=true` but no proxy URL is configured, OpenClaw logs a warning and continues with application-level SSRF guards only.
+If `enabled=true` but no valid proxy URL is configured, protected commands fail startup instead of falling back to direct network access.
 
 For managed gateway services started with `openclaw gateway start`, prefer storing the URL in config:
 
@@ -79,7 +73,7 @@ openclaw gateway start
 
 The environment fallback is best for foreground runs. If you use it with an installed service, put `OPENCLAW_PROXY_URL` in the service durable environment, such as `$OPENCLAW_STATE_DIR/.env` or `~/.openclaw/.env`, then reinstall the service so launchd, systemd, or Scheduled Tasks starts the gateway with that value.
 
-For `openclaw --container ...` commands, OpenClaw forwards `OPENCLAW_PROXY_URL` into the container-targeted child CLI when it is set. Make sure the URL is reachable from inside the container; `127.0.0.1` refers to the container itself, not the host.
+For `openclaw --container ...` commands, OpenClaw forwards `OPENCLAW_PROXY_URL` into the container-targeted child CLI when it is set. The URL must be reachable from inside the container; `127.0.0.1` refers to the container itself, not the host. OpenClaw rejects loopback proxy URLs for container-targeted commands unless you explicitly override that safety check.
 
 ## Proxy Requirements
 
@@ -153,7 +147,8 @@ proxy:
 
 ## Limits
 
-- The proxy improves coverage for process-local JavaScript HTTP clients, but it does not replace application-level `fetchWithSsrFGuard`.
-- Raw sockets, native addons, and child processes may bypass Node-level proxy routing unless they inherit and respect proxy environment variables.
+- The proxy improves coverage for process-local JavaScript HTTP and WebSocket clients, but it does not replace application-level `fetchWithSsrFGuard`.
+- Raw `net`, `tls`, and `http2` sockets, native addons, and child processes may bypass Node-level proxy routing unless they inherit and respect proxy environment variables.
+- User local WebUIs and local model servers should be allowlisted in the operator proxy policy when needed; OpenClaw does not expose a general local-network bypass for them.
 - OpenClaw does not inspect, test, or certify your proxy policy.
 - Treat proxy policy changes as security-sensitive operational changes.

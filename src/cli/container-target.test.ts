@@ -263,6 +263,64 @@ describe("maybeRunCliInContainer", () => {
     );
   });
 
+  it("fails before forwarding a loopback proxy URL into a child container CLI", () => {
+    const spawnSync = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "true\n",
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+      });
+
+    expect(() =>
+      maybeRunCliInContainer(["node", "openclaw", "status"], {
+        env: {
+          OPENCLAW_CONTAINER: "demo",
+          OPENCLAW_PROXY_URL: " http://127.0.0.1:3128 ",
+        } as NodeJS.ProcessEnv,
+        spawnSync,
+      }),
+    ).toThrow("127.0.0.1 inside a container points at the container");
+
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows explicitly overridden loopback proxy URL forwarding into a child container CLI", () => {
+    const spawnSync = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "true\n",
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "",
+      });
+
+    maybeRunCliInContainer(["node", "openclaw", "status"], {
+      env: {
+        OPENCLAW_CONTAINER: "demo",
+        OPENCLAW_PROXY_URL: " http://127.0.0.1:3128 ",
+        OPENCLAW_CONTAINER_ALLOW_LOOPBACK_PROXY_URL: "1",
+      } as NodeJS.ProcessEnv,
+      spawnSync,
+    });
+
+    expect(spawnSync).toHaveBeenNthCalledWith(
+      3,
+      "podman",
+      expect.arrayContaining(["OPENCLAW_PROXY_URL=http://127.0.0.1:3128"]),
+      expect.anything(),
+    );
+  });
+
   it("executes through podman when the named container is running", () => {
     const spawnSync = vi
       .fn()

@@ -15,6 +15,7 @@ const {
   }
 
   class EnvHttpProxyAgent {
+    public readonly capturedHttpProxy = process.env.HTTP_PROXY;
     constructor(public readonly options?: Record<string, unknown>) {}
   }
 
@@ -275,6 +276,21 @@ describe("forceResetGlobalDispatcher", () => {
 
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
     expect(getCurrentDispatcher()).toBeInstanceOf(Agent);
+  });
+
+  it("replaces a stale EnvHttpProxyAgent when restored proxy env is still configured", () => {
+    process.env.HTTP_PROXY = "http://proxy-a.example:8080";
+    vi.mocked(hasEnvHttpProxyConfigured).mockReturnValue(true);
+    setCurrentDispatcher(new EnvHttpProxyAgent());
+
+    process.env.HTTP_PROXY = "http://proxy-b.example:8080";
+    forceResetGlobalDispatcher();
+
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
+    expect(getCurrentDispatcher()).toBeInstanceOf(EnvHttpProxyAgent);
+    expect((getCurrentDispatcher() as { capturedHttpProxy?: string }).capturedHttpProxy).toBe(
+      "http://proxy-b.example:8080",
+    );
   });
 });
 

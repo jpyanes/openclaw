@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import * as net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 
 async function listenOnLoopback(server: Server): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -94,6 +95,11 @@ function createTunnelProxy(seenConnectTargets: string[]): Server {
     });
   });
 
+  proxy.on("upgrade", (req, socket) => {
+    seenConnectTargets.push(req.url ?? "");
+    socket.destroy();
+  });
+
   return proxy;
 }
 
@@ -145,21 +151,43 @@ async function runNodeModule(
 
 describe("SSRF external proxy routing", () => {
   let target: Server | null = null;
+  let httpsLikeTarget: Server | null = null;
   let proxy: Server | null = null;
+  let wss: WebSocketServer | null = null;
 
   afterEach(async () => {
+    await new Promise<void>((resolve) => {
+      if (!wss) {
+        resolve();
+        return;
+      }
+      wss.close(() => resolve());
+    });
     await closeServer(proxy);
+    await closeServer(httpsLikeTarget);
     await closeServer(target);
+    wss = null;
     proxy = null;
+    httpsLikeTarget = null;
     target = null;
   });
 
-  it("routes fetch and node:http through an operator-managed proxy even when NO_PROXY includes loopback", async () => {
+  it("routes normal HTTP and WebSocket egress through an operator-managed proxy even when NO_PROXY includes loopback", async () => {
     target = createServer((_req, res) => {
       res.writeHead(218, { "content-type": "text/plain" });
       res.end("from loopback target");
     });
+    wss = new WebSocketServer({ server: target });
+    wss.on("connection", (ws) => {
+      ws.close(1000, "done");
+    });
     const targetPort = await listenOnLoopback(target);
+
+    httpsLikeTarget = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("plain target for https CONNECT proof");
+    });
+    const httpsLikeTargetPort = await listenOnLoopback(httpsLikeTarget);
 
     const seenConnectTargets: string[] = [];
     proxy = createTunnelProxy(seenConnectTargets);
@@ -168,12 +196,15 @@ describe("SSRF external proxy routing", () => {
     const child = await runNodeModule(
       `
         import http from "node:http";
+        import https from "node:https";
         import { fetch as undiciFetch } from "undici";
+        import { WebSocket } from "ws";
         import { startProxy, stopProxy } from "./src/infra/net/proxy/proxy-lifecycle.ts";
+        import { dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane } from "./src/infra/net/proxy/proxy-lifecycle.ts";
 
-        async function nodeHttpGet(url) {
+        async function nodeHttpGet(url, options = {}) {
           return new Promise((resolve, reject) => {
-            const req = http.get(url, (response) => {
+            const req = http.get(url, options, (response) => {
               let body = "";
               response.setEncoding("utf8");
               response.on("data", (chunk) => {
@@ -190,6 +221,52 @@ describe("SSRF external proxy routing", () => {
           });
         }
 
+        async function expectFailure(label, run) {
+          try {
+            await run();
+          } catch {
+            return;
+          }
+          throw new Error(label + " unexpectedly succeeded");
+        }
+
+        async function nodeHttpsProbe(url) {
+          return new Promise((resolve, reject) => {
+            const req = https.get(url, { rejectUnauthorized: false }, (response) => {
+              response.resume();
+              response.on("end", resolve);
+            });
+            req.setTimeout(5000, () => {
+              req.destroy(new Error("node:https request timed out"));
+            });
+            req.on("error", reject);
+          });
+        }
+
+        async function websocketProbe(url) {
+          return new Promise((resolve, reject) => {
+            const ws = new WebSocket(url, { handshakeTimeout: 5000 });
+            ws.once("open", () => {
+              ws.close();
+              reject(new Error("proxied websocket unexpectedly opened"));
+            });
+            ws.once("error", () => resolve());
+          });
+        }
+
+        async function gatewayLoopbackBypassProbe(url) {
+          return new Promise((resolve, reject) => {
+            const ws = dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane(url, () =>
+              new WebSocket(url, { handshakeTimeout: 5000 }),
+            );
+            ws.once("open", () => {
+              ws.close();
+              resolve();
+            });
+            ws.once("error", reject);
+          });
+        }
+
         const handle = await startProxy({ enabled: true });
         if (handle === null) {
           throw new Error("expected external proxy routing to start");
@@ -200,7 +277,22 @@ describe("SSRF external proxy routing", () => {
           });
           const body = await response.text();
           const nodeHttp = await nodeHttpGet(process.env.OPENCLAW_TEST_NODE_HTTP_TARGET_URL);
-          console.log(JSON.stringify({ fetch: { status: response.status, body }, nodeHttp }));
+          const explicitAgent = await nodeHttpGet(process.env.OPENCLAW_TEST_EXPLICIT_AGENT_TARGET_URL, {
+            agent: new http.Agent(),
+          });
+          await expectFailure("node:https", () =>
+            nodeHttpsProbe(process.env.OPENCLAW_TEST_NODE_HTTPS_TARGET_URL),
+          );
+          await websocketProbe(process.env.OPENCLAW_TEST_WS_TARGET_URL);
+          await gatewayLoopbackBypassProbe(process.env.OPENCLAW_TEST_GATEWAY_BYPASS_WS_URL);
+          await expectFailure("non-loopback bypass", () =>
+            gatewayLoopbackBypassProbe("wss://gateway.example.com/socket"),
+          );
+          console.log(JSON.stringify({
+            fetch: { status: response.status, body },
+            nodeHttp,
+            explicitAgent,
+          }));
         } finally {
           await stopProxy(handle);
         }
@@ -210,6 +302,10 @@ describe("SSRF external proxy routing", () => {
         OPENCLAW_PROXY_URL: `http://127.0.0.1:${proxyPort}`,
         OPENCLAW_TEST_TARGET_URL: `http://127.0.0.1:${targetPort}/private-metadata`,
         OPENCLAW_TEST_NODE_HTTP_TARGET_URL: `http://127.0.0.1:${targetPort}/node-http-metadata`,
+        OPENCLAW_TEST_EXPLICIT_AGENT_TARGET_URL: `http://127.0.0.1:${targetPort}/explicit-agent`,
+        OPENCLAW_TEST_NODE_HTTPS_TARGET_URL: `https://127.0.0.1:${httpsLikeTargetPort}/https-connect-proof`,
+        OPENCLAW_TEST_WS_TARGET_URL: `ws://127.0.0.1:${targetPort}/websocket-proxied`,
+        OPENCLAW_TEST_GATEWAY_BYPASS_WS_URL: `ws://127.0.0.1:${targetPort}/gateway-bypass`,
         NO_PROXY: "127.0.0.1,localhost",
         no_proxy: "localhost",
         GLOBAL_AGENT_NO_PROXY: "localhost",
@@ -220,8 +316,13 @@ describe("SSRF external proxy routing", () => {
     expect(child.code).toBe(0);
     expect(child.stdout).toContain('"fetch":{"status":218');
     expect(child.stdout).toContain('"nodeHttp":{"status":218');
+    expect(child.stdout).toContain('"explicitAgent":{"status":218');
     expect(child.stdout).toContain('"body":"from loopback target"');
     expect(seenConnectTargets).toContain(`127.0.0.1:${targetPort}`);
+    expect(seenConnectTargets).toContain(`127.0.0.1:${httpsLikeTargetPort}`);
     expect(seenConnectTargets).toContain(`http://127.0.0.1:${targetPort}/node-http-metadata`);
+    expect(seenConnectTargets).toContain(`http://127.0.0.1:${targetPort}/explicit-agent`);
+    expect(seenConnectTargets).toContain(`http://127.0.0.1:${targetPort}/websocket-proxied`);
+    expect(seenConnectTargets).not.toContain(`http://127.0.0.1:${targetPort}/gateway-bypass`);
   });
 });

@@ -19,7 +19,12 @@ vi.mock("../../../logger.js", () => ({
 import { bootstrap as bootstrapGlobalAgent } from "global-agent";
 import { logInfo, logWarn } from "../../../logger.js";
 import { forceResetGlobalDispatcher } from "../undici-global-dispatcher.js";
-import { _resetGlobalAgentBootstrapForTests, startProxy, stopProxy } from "./proxy-lifecycle.js";
+import {
+  _resetGlobalAgentBootstrapForTests,
+  dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane,
+  startProxy,
+  stopProxy,
+} from "./proxy-lifecycle.js";
 
 const mockForceResetGlobalDispatcher = vi.mocked(forceResetGlobalDispatcher);
 const mockBootstrapGlobalAgent = vi.mocked(bootstrapGlobalAgent);
@@ -97,14 +102,13 @@ describe("startProxy", () => {
     expect(mockLogWarn).not.toHaveBeenCalled();
   });
 
-  it("returns null and logs when enabled without a proxy URL", async () => {
-    const handle = await startProxy({ enabled: true });
-
-    expect(handle).toBeNull();
-    expect(process.env["http_proxy"]).toBeUndefined();
-    expect(mockLogWarn).toHaveBeenCalledWith(
-      expect.stringContaining("enabled but no HTTP proxy URL is configured"),
+  it("throws when enabled without a proxy URL", async () => {
+    await expect(startProxy({ enabled: true })).rejects.toThrow(
+      "proxy: enabled but no HTTP proxy URL is configured",
     );
+
+    expect(process.env["http_proxy"]).toBeUndefined();
+    expect(mockLogWarn).not.toHaveBeenCalled();
   });
 
   it("uses OPENCLAW_PROXY_URL when config proxyUrl is omitted", async () => {
@@ -128,14 +132,13 @@ describe("startProxy", () => {
     expect(process.env["HTTP_PROXY"]).toBe("http://127.0.0.1:3129");
   });
 
-  it("rejects HTTPS proxy URLs from OPENCLAW_PROXY_URL", async () => {
+  it("throws for HTTPS proxy URLs from OPENCLAW_PROXY_URL", async () => {
     process.env["OPENCLAW_PROXY_URL"] = "https://127.0.0.1:3128";
 
-    const handle = await startProxy({ enabled: true });
+    await expect(startProxy({ enabled: true })).rejects.toThrow("http:// forward proxy");
 
-    expect(handle).toBeNull();
     expect(process.env["HTTP_PROXY"]).toBeUndefined();
-    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("http:// forward proxy"));
+    expect(mockLogWarn).not.toHaveBeenCalled();
   });
 
   it("sets both undici and global-agent proxy env vars", async () => {
@@ -151,7 +154,7 @@ describe("startProxy", () => {
     expect(process.env["HTTPS_PROXY"]).toBe("http://127.0.0.1:3128");
     expect(process.env["GLOBAL_AGENT_HTTP_PROXY"]).toBe("http://127.0.0.1:3128");
     expect(process.env["GLOBAL_AGENT_HTTPS_PROXY"]).toBe("http://127.0.0.1:3128");
-    expect(process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"]).toBe("false");
+    expect(process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"]).toBe("true");
     expect(process.env["OPENCLAW_PROXY_ACTIVE"]).toBe("1");
   });
 
@@ -267,24 +270,48 @@ describe("startProxy", () => {
     expect((global as Record<string, unknown>)["GLOBAL_AGENT"]).toBeUndefined();
   });
 
-  it("restores env when undici activation fails", async () => {
+  it("restores env and throws when undici activation fails", async () => {
     mockForceResetGlobalDispatcher.mockImplementationOnce(() => {
       throw new Error("dispatcher failed");
     });
 
-    const handle = await startProxy({
-      enabled: true,
-      proxyUrl: "http://127.0.0.1:3128",
-    });
+    await expect(
+      startProxy({
+        enabled: true,
+        proxyUrl: "http://127.0.0.1:3128",
+      }),
+    ).rejects.toThrow("failed to activate external proxy routing");
 
-    expect(handle).toBeNull();
     expect(process.env["http_proxy"]).toBeUndefined();
     expect(process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"]).toBeUndefined();
   });
 
-  it("restores env when global-agent bootstrap fails", async () => {
+  it("restores env and throws when global-agent bootstrap fails", async () => {
     mockBootstrapGlobalAgent.mockImplementationOnce(() => {
       throw new Error("bootstrap failed");
+    });
+
+    await expect(
+      startProxy({
+        enabled: true,
+        proxyUrl: "http://127.0.0.1:3128",
+      }),
+    ).rejects.toThrow("failed to activate external proxy routing");
+
+    expect(process.env["http_proxy"]).toBeUndefined();
+    expect(process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"]).toBeUndefined();
+  });
+
+  it("temporarily restores the original node HTTP stack for Gateway loopback control-plane setup", async () => {
+    const patchedHttpRequest = vi.fn() as unknown as typeof http.request;
+    const patchedHttpGet = vi.fn() as unknown as typeof http.get;
+    mockBootstrapGlobalAgent.mockImplementationOnce(() => {
+      http.request = patchedHttpRequest;
+      http.get = patchedHttpGet;
+      (global as Record<string, unknown>)["GLOBAL_AGENT"] = {
+        HTTP_PROXY: "",
+        HTTPS_PROXY: "",
+      };
     });
 
     const handle = await startProxy({
@@ -292,9 +319,26 @@ describe("startProxy", () => {
       proxyUrl: "http://127.0.0.1:3128",
     });
 
-    expect(handle).toBeNull();
-    expect(process.env["http_proxy"]).toBeUndefined();
-    expect(process.env["GLOBAL_AGENT_FORCE_GLOBAL_AGENT"]).toBeUndefined();
+    expect(http.request).toBe(patchedHttpRequest);
+
+    const requestDuringBypass = dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane(
+      "ws://127.0.0.1:18789",
+      () => http.request,
+    );
+
+    expect(requestDuringBypass).toBe(originalHttpRequest);
+    expect(http.request).toBe(patchedHttpRequest);
+
+    await stopProxy(handle);
+  });
+
+  it("rejects dangerous Gateway control-plane bypass for non-loopback URLs", () => {
+    expect(() =>
+      dangerouslyBypassManagedProxyForGatewayLoopbackControlPlane(
+        "wss://gateway.example.com",
+        () => undefined,
+      ),
+    ).toThrow("loopback-only");
   });
 
   it("kill restores env synchronously during hard process exit", async () => {
