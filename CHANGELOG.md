@@ -6,6 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Gateway/install: add a validated `--wrapper`/`OPENCLAW_WRAPPER` service install path that persists executable LaunchAgent/systemd wrappers across forced reinstalls, updates, and doctor repairs instead of falling back to raw node/bun `ProgramArguments`. Fixes #69400. Thanks @willtmc.
 - macOS Gateway: write launchd services with a state-dir `WorkingDirectory`, use a durable state-dir temp path instead of freezing macOS session `TMPDIR`, create that temp directory before bootstrap, and label abort-shaped launchd exits as `SIGABRT/abort` in status output. Fixes #53679 and #70223; refs #71848. Thanks @dlturock, @stammi922, and @palladius.
 - Exec/node: skip approval-plan preparation for full-trust `host=node` runs so interpreter and script commands no longer fail with `SYSTEM_RUN_DENIED: approval cannot safely bind` when effective policy is `security=full` and `ask=off`. Fixes #48457 and duplicate #69251. Thanks @ajtran303, @jaserNo1, @Blakeshannon, @lesliefag, and @AvIsBeastMC.
 - Memory/QMD: prefer QMD's `--mask` collection pattern flag so root memory indexing stays scoped to `MEMORY.md` instead of widening to every markdown file in the workspace. Thanks @codex.
