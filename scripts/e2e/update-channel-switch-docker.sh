@@ -41,8 +41,10 @@ git_root="/tmp/openclaw-git"
 mkdir -p "$git_root"
 # Build the fake git install from the packed package contents, not the checkout.
 tar -xzf "$package_tgz" -C "$git_root" --strip-components=1
-# The package-derived fixture can carry patchedDependencies whose targets are
-# absent from the trimmed tarball install; that should not block update preflight.
+# The package-derived fixture is intentionally not a full source checkout, but
+# the dev-channel updater still preflights install/build/lint before selecting a
+# git commit. Keep those checks focused on update plumbing instead of files the
+# npm package does not ship.
 node - <<'"'"'NODE'"'"'
 const fs = require("node:fs");
 const packageJsonPath = "/tmp/openclaw-git/package.json";
@@ -51,7 +53,9 @@ packageJson.pnpm = { ...packageJson.pnpm, allowUnusedPatches: true };
 packageJson.scripts = {
   ...packageJson.scripts,
   build: "node -e \"console.log(\\\"fixture build skipped\\\")\"",
-  "ui:build": "node -e \"console.log(\\\"fixture ui build skipped\\\")\"",
+  lint: "node -e \"\"",
+  "ui:build":
+    "node -e \"const fs=require(\\\"node:fs\\\");fs.mkdirSync(\\\"dist/control-ui\\\",{recursive:true});fs.writeFileSync(\\\"dist/control-ui/index.html\\\",\\\"ok\\\")\"",
 };
 fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
 NODE
