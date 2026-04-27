@@ -522,16 +522,16 @@ describe("exec approvals", () => {
 
   it("preserves explicit workdir for node exec", async () => {
     const remoteWorkdir = "/Users/vv";
-    let prepareCwd: string | undefined;
+    let runCwd: string | undefined;
 
     vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
       if (method === "node.invoke") {
         const invoke = params as { command?: string; params?: { cwd?: string } };
         if (invoke.command === "system.run.prepare") {
-          prepareCwd = invoke.params?.cwd;
           return buildPreparedSystemRunPayload(params);
         }
         if (invoke.command === "system.run") {
+          runCwd = invoke.params?.cwd;
           return { payload: { success: true, stdout: "ok" } };
         }
       }
@@ -551,7 +551,7 @@ describe("exec approvals", () => {
     });
 
     expect(result.details.status).toBe("completed");
-    expect(prepareCwd).toBe(remoteWorkdir);
+    expect(runCwd).toBe(remoteWorkdir);
   });
 
   it("does not forward the gateway default cwd to node exec when workdir is omitted", async () => {
